@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/flakerimi/harness/auth"
 )
 
 // Build resolves a provider slug into a concrete Provider, reading credentials
@@ -18,11 +20,15 @@ func Build(slug string) (Provider, error) {
 	case "", "mock":
 		return NewMock(), nil
 	case "anthropic", "claude":
-		key := os.Getenv("ANTHROPIC_API_KEY")
-		if key == "" {
-			return nil, fmt.Errorf("provider %q: ANTHROPIC_API_KEY not set", slug)
+		if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+			return NewAnthropic(key), nil
 		}
-		return NewAnthropic(key), nil
+		// No API key — fall back to OAuth credentials from the auth file.
+		store := auth.NewStore(envOr("HARNESS_AUTH_FILE", "auth.json"))
+		if _, err := store.Load("claude"); err != nil {
+			return nil, fmt.Errorf("provider %q: set ANTHROPIC_API_KEY, or provide OAuth credentials: %w", slug, err)
+		}
+		return NewAnthropic("").WithOAuth(auth.NewAnthropicTokenSource(store, "claude")), nil
 	case "openai", "chatgpt":
 		key := os.Getenv("OPENAI_API_KEY")
 		if key == "" {

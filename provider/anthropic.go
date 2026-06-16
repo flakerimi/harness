@@ -10,6 +10,13 @@ import (
 	"strings"
 )
 
+// TokenSource yields short-lived OAuth access tokens (e.g. from a refresh
+// flow). When set on an Anthropic provider, the harness authenticates with
+// Authorization: Bearer + the oauth beta header instead of x-api-key.
+type TokenSource interface {
+	Token(ctx context.Context) (string, error)
+}
+
 // Anthropic adapts the Claude Messages API to the neutral Provider interface.
 // It uses the raw HTTP + SSE wire protocol (no SDK dependency) so the harness
 // stays self-contained.
@@ -18,6 +25,13 @@ type Anthropic struct {
 	BaseURL string // default https://api.anthropic.com
 	Version string // anthropic-version header, default 2023-06-01
 	HTTP    *http.Client
+	Tokens  TokenSource // when set, OAuth Bearer auth is used instead of APIKey
+}
+
+// WithOAuth switches the provider to OAuth Bearer authentication.
+func (a *Anthropic) WithOAuth(src TokenSource) *Anthropic {
+	a.Tokens = src
+	return a
 }
 
 // NewAnthropic builds an Anthropic provider from an API key.
@@ -39,14 +53,28 @@ func (a *Anthropic) Stream(ctx context.Context, req Request, emit func(Event)) e
 	}
 
 	url := strings.TrimRight(a.BaseURL, "/") + "/v1/messages"
+	if a.Tokens != nil {
+		// Claude Pro/Max OAuth requires the ?beta=true query param.
+		url += "?beta=true"
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
-	httpReq.Header.Set("x-api-key", a.APIKey)
 	httpReq.Header.Set("anthropic-version", a.Version)
+	if a.Tokens != nil {
+		access, tokErr := a.Tokens.Token(ctx)
+		if tokErr != nil {
+			return fmt.Errorf("anthropic: oauth token: %w", tokErr)
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+access)
+		httpReq.Header.Set("anthropic-beta", "oauth-2025-04-20")
+		httpReq.Header.Set("User-Agent", "harness/0.1")
+	} else {
+		httpReq.Header.Set("x-api-key", a.APIKey)
+	}
 
 	resp, err := a.HTTP.Do(httpReq)
 	if err != nil {
@@ -65,7 +93,13 @@ func (a *Anthropic) Stream(ctx context.Context, req Request, emit func(Event)) e
 	})
 }
 
+// claudeCodeSystemPrompt is the identifier Anthropic requires as the first
+// system block when authenticating with a Claude Pro/Max OAuth token. Without
+// it (plus metadata.user_id and ?beta=true), the API rejects the request.
+const claudeCodeSystemPrompt = "You are Claude Code, Anthropic's official CLI for Claude."
+
 func (a *Anthropic) buildBody(req Request) map[string]any {
+	useOAuth := a.Tokens != nil
 	maxTokens := req.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = 4096
@@ -76,18 +110,11 @@ func (a *Anthropic) buildBody(req Request) map[string]any {
 		"stream":     true,
 		"messages":   anthropicMessages(req.Messages),
 	}
-
-	if req.System != "" {
-		if req.HasCap(CapCaching) {
-			// Array form lets us set a cache breakpoint on the system prompt.
-			body["system"] = []map[string]any{{
-				"type":          "text",
-				"text":          req.System,
-				"cache_control": map[string]any{"type": "ephemeral"},
-			}}
-		} else {
-			body["system"] = req.System
-		}
+	if useOAuth {
+		body["metadata"] = map[string]any{"user_id": "harness"}
+	}
+	if sys := systemBlocks(req.System, useOAuth, req.HasCap(CapCaching)); sys != nil {
+		body["system"] = sys
 	}
 
 	if len(req.Tools) > 0 && req.HasCap(CapTools) {
@@ -106,6 +133,34 @@ func (a *Anthropic) buildBody(req Request) map[string]any {
 		body["tools"] = tools
 	}
 	return body
+}
+
+// systemBlocks builds the system field. On OAuth the Claude Code identifier is
+// always block #1; the user's system prompt follows. With caching, a
+// cache_control breakpoint is placed on the last system block.
+func systemBlocks(userSystem string, useOAuth, caching bool) any {
+	if !useOAuth {
+		if userSystem == "" {
+			return nil
+		}
+		if !caching {
+			return userSystem
+		}
+		return []map[string]any{{
+			"type":          "text",
+			"text":          userSystem,
+			"cache_control": map[string]any{"type": "ephemeral"},
+		}}
+	}
+
+	blocks := []map[string]any{{"type": "text", "text": claudeCodeSystemPrompt}}
+	if userSystem != "" {
+		blocks = append(blocks, map[string]any{"type": "text", "text": userSystem})
+	}
+	if caching {
+		blocks[len(blocks)-1]["cache_control"] = map[string]any{"type": "ephemeral"}
+	}
+	return blocks
 }
 
 // anthropicMessages translates neutral messages into Anthropic's content-block

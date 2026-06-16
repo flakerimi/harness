@@ -8,10 +8,13 @@
 go.work
 go.work.sum
 
-# Env / secrets — never commit API keys
+# Env / secrets — never commit API keys or OAuth tokens
 .env
 .env.*
 *.local
+auth.json
+*.secret.json
+.secrets/
 
 # OS / editor
 .DS_Store
