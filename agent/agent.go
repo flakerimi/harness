@@ -27,12 +27,14 @@ type Handler interface {
 
 // Options configure an Agent.
 type Options struct {
-	Model     string
-	System    string
-	MaxTokens int
-	Caps      []string  // provider capability flags (see provider.Cap*)
-	Env       *tool.Env // mediated world for tools; defaults to root "."
-	MaxTurns  int       // safety cap on the call→result loop; default 16
+	Model      string
+	System     string
+	MaxTokens  int
+	Caps       []string        // provider capability flags (see provider.Cap*)
+	Env        *tool.Env       // mediated world for tools; defaults to root "."
+	MaxTurns   int             // safety cap on the call→result loop; default 16
+	Context    ContextStrategy // what to send each turn; defaults to KeepAll
+	Permission PermissionGate  // optional gate run before each tool call
 }
 
 // Agent binds a Provider and a tool Registry into a runnable loop.
@@ -85,7 +87,7 @@ func (a *Agent) streamOne(ctx context.Context, msgs []provider.Message, h Handle
 	req := provider.Request{
 		Model:     a.opts.Model,
 		System:    a.opts.System,
-		Messages:  msgs,
+		Messages:  a.strategy().Assemble(msgs),
 		Tools:     a.providerTools(),
 		MaxTokens: a.opts.MaxTokens,
 		CapFlags:  a.opts.Caps,
@@ -178,6 +180,13 @@ func (a *Agent) runOne(ctx context.Context, tu *provider.ToolUseBlock, h Handler
 		return res
 	}
 	input, _ := json.Marshal(tu.Input)
+
+	if a.opts.Permission != nil && a.opts.Permission(ctx, tu.Name, input) == Deny {
+		res := tool.Result{Content: "permission denied for tool: " + tu.Name, IsError: true}
+		h.OnToolResult(tu.Name, res)
+		return res
+	}
+
 	res, err := t.Run(ctx, input, a.env())
 	if err != nil {
 		res = tool.Result{Content: err.Error(), IsError: true}
@@ -200,6 +209,13 @@ func (a *Agent) env() *tool.Env {
 		return a.opts.Env
 	}
 	return &tool.Env{Root: "."}
+}
+
+func (a *Agent) strategy() ContextStrategy {
+	if a.opts.Context != nil {
+		return a.opts.Context
+	}
+	return KeepAll{}
 }
 
 type toolAccum struct {

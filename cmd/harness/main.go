@@ -1,6 +1,9 @@
-// Command harness is a thin reference CLI built on the framework: pick a
-// provider, register tools, run one agent turn, stream the result. It exists
-// to dogfood the library — the real product is the packages it imports.
+// Command harness is a thin reference CLI built on the framework. Subcommands:
+//
+//	harness login [-provider claude]   # OAuth login → writes auth.json
+//	harness [flags] <prompt>           # run one agent turn (default)
+//
+// It exists to dogfood the library — the real product is the packages it imports.
 package main
 
 import (
@@ -13,26 +16,81 @@ import (
 	"strings"
 
 	"github.com/flakerimi/harness/agent"
+	"github.com/flakerimi/harness/auth"
 	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/tool"
 )
 
 func main() {
-	providerSlug := flag.String("provider", "mock", "provider slug: mock | anthropic|claude | openai | ollama | lmstudio")
-	model := flag.String("model", "", "model id (defaults per provider)")
-	system := flag.String("system", "You are a helpful assistant.", "system prompt")
-	maxTokens := flag.Int("max-tokens", 4096, "max output tokens")
-	root := flag.String("root", ".", "workspace root for filesystem tools")
-	flag.Parse()
+	if len(os.Args) > 1 && os.Args[1] == "login" {
+		runLogin(os.Args[2:])
+		return
+	}
+	runAgent(os.Args[1:])
+}
 
-	prompt := strings.TrimSpace(strings.Join(flag.Args(), " "))
+func authFileDefault() string {
+	if v := os.Getenv("HARNESS_AUTH_FILE"); v != "" {
+		return v
+	}
+	return "auth.json"
+}
+
+func runLogin(args []string) {
+	fs := flag.NewFlagSet("login", flag.ExitOnError)
+	prov := fs.String("provider", "claude", "provider to log in (claude)")
+	authFile := fs.String("auth-file", authFileDefault(), "credential file to write")
+	urlOnly := fs.Bool("url-only", false, "print the authorize URL and exit (no browser, no wait)")
+	_ = fs.Parse(args)
+
+	switch strings.ToLower(*prov) {
+	case "claude", "anthropic":
+	default:
+		fmt.Fprintf(os.Stderr, "login: only 'claude' is supported (got %q)\n", *prov)
+		os.Exit(2)
+	}
+
+	if *urlOnly {
+		u, _, err := auth.AnthropicAuthURL()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		fmt.Println(u)
+		return
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	store := auth.NewStore(*authFile)
+	fmt.Fprintln(os.Stderr, "Opening browser for Claude login…")
+	if _, err := auth.AnthropicLogin(ctx, store, "claude", func(u string) {
+		fmt.Fprintln(os.Stderr, "If your browser didn't open, visit:\n  "+u)
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, "login failed:", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "✓ logged in — credentials saved to %s\n", *authFile)
+}
+
+func runAgent(args []string) {
+	fs := flag.NewFlagSet("harness", flag.ExitOnError)
+	providerSlug := fs.String("provider", "mock", "provider slug: mock | anthropic|claude | openai | ollama | lmstudio")
+	model := fs.String("model", "", "model id (defaults per provider)")
+	system := fs.String("system", "You are a helpful assistant.", "system prompt")
+	maxTokens := fs.Int("max-tokens", 4096, "max output tokens")
+	root := fs.String("root", ".", "workspace root for filesystem tools")
+	_ = fs.Parse(args)
+
+	prompt := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if prompt == "" {
 		data, _ := io.ReadAll(os.Stdin)
 		prompt = strings.TrimSpace(string(data))
 	}
 	if prompt == "" {
 		fmt.Fprintln(os.Stderr, "usage: harness [flags] <prompt>   (or pipe the prompt on stdin)")
-		flag.PrintDefaults()
+		fs.PrintDefaults()
 		os.Exit(2)
 	}
 
