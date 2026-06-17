@@ -17,6 +17,7 @@ import (
 
 	"github.com/flakerimi/harness/agent"
 	"github.com/flakerimi/harness/auth"
+	"github.com/flakerimi/harness/config"
 	"github.com/flakerimi/harness/connector"
 	"github.com/flakerimi/harness/connector/mcp"
 	"github.com/flakerimi/harness/profile"
@@ -34,17 +35,81 @@ func main() {
 		case "connectors":
 			runConnectors(os.Args[2:])
 			return
+		case "config":
+			runConfig(os.Args[2:])
+			return
 		}
 	}
 	runAgent(os.Args[1:])
+}
+
+// runConfig prints the config file location and the resolved search settings
+// (secrets masked) — so "where is my config / am I set up" is one command.
+func runConfig(_ []string) {
+	fmt.Printf("config file: %s\n", config.Path())
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	u := firstNonEmpty(cfg.Search.SearxngURL, os.Getenv("HARNESS_SEARXNG_URL"))
+	tok := firstNonEmpty(cfg.Search.SearxngToken, os.Getenv("HARNESS_SEARXNG_TOKEN"))
+	fmt.Printf("search.searxng_url:   %s\n", maskURLSecret(u))
+	fmt.Printf("search.searxng_token: %s\n", maskSecret(tok))
+	if u == "" {
+		fmt.Println("\n(no SearXNG configured — web_search falls back to DuckDuckGo)")
+	}
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+func maskSecret(s string) string {
+	if s == "" {
+		return "(unset)"
+	}
+	if len(s) <= 8 {
+		return "****"
+	}
+	return s[:4] + "…" + s[len(s)-4:]
+}
+
+// maskURLSecret hides the password in a userinfo-bearing URL.
+func maskURLSecret(raw string) string {
+	if raw == "" {
+		return "(unset)"
+	}
+	at := strings.LastIndex(raw, "@")
+	scheme := strings.Index(raw, "://")
+	if at < 0 || scheme < 0 || at < scheme {
+		return raw
+	}
+	userinfo := raw[scheme+3 : at]
+	user, _, hasPass := strings.Cut(userinfo, ":")
+	if !hasPass {
+		return raw
+	}
+	return raw[:scheme+3] + user + ":****@" + raw[at+1:]
 }
 
 // defaultConnectors wires the integrations available to this harness instance.
 // Native built-ins are always present; external connectors (calendar, mail,
 // search via MCP) are added here as they're built — never hardcoded deeper in.
 func defaultConnectors() *connector.Registry {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "warning: config:", err)
+	}
 	r := connector.NewRegistry()
-	r.Add(connector.NewNative("builtin", tool.ReadFile{}, tool.WebFetch{}, tool.WebSearch{}))
+	r.Add(connector.NewNative("builtin",
+		tool.ReadFile{},
+		tool.WebFetch{},
+		tool.WebSearch{SearxngURL: cfg.Search.SearxngURL, SearxngToken: cfg.Search.SearxngToken},
+	))
 
 	// External connectors come from mcp.json — add a server there and it shows
 	// up here with no code change. Nothing vendor-specific is baked in.

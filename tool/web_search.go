@@ -21,8 +21,13 @@ import (
 //     engine with HARNESS_SEARCH_URL (any DDG-style endpoint, e.g. Bing).
 //
 // The harness stays a single binary either way — it only makes an HTTP call.
+//
+// SearxngURL / SearxngToken are usually set from the config file; when empty
+// they fall back to HARNESS_SEARXNG_URL / HARNESS_SEARXNG_TOKEN.
 type WebSearch struct {
-	HTTP *http.Client
+	HTTP         *http.Client
+	SearxngURL   string
+	SearxngToken string
 }
 
 func (WebSearch) Spec() Spec {
@@ -60,9 +65,13 @@ func (w WebSearch) Run(ctx context.Context, input json.RawMessage, _ *Env) (Resu
 		client = &http.Client{Timeout: 20 * time.Second}
 	}
 
-	// Prefer a self-hosted SearXNG instance when configured.
-	if base := os.Getenv("HARNESS_SEARXNG_URL"); base != "" {
-		return w.searxng(ctx, client, base, in.Query, in.Limit)
+	// Prefer a self-hosted SearXNG instance when configured (field, then env).
+	sx := w.SearxngURL
+	if sx == "" {
+		sx = os.Getenv("HARNESS_SEARXNG_URL")
+	}
+	if sx != "" {
+		return w.searxng(ctx, client, sx, in.Query, in.Limit)
 	}
 
 	endpoint := os.Getenv("HARNESS_SEARCH_URL")
@@ -115,9 +124,13 @@ func (w WebSearch) searxng(ctx context.Context, client *http.Client, base, query
 	req.Header.Set("User-Agent", "harness/0.1 (+web_search)")
 	req.Header.Set("Accept", "application/json")
 
-	// Auth: a bearer token (HARNESS_SEARXNG_TOKEN), or basic-auth credentials
-	// embedded in HARNESS_SEARXNG_URL (https://user:pass@host).
-	if tok := os.Getenv("HARNESS_SEARXNG_TOKEN"); tok != "" {
+	// Auth: a bearer token (config field, then HARNESS_SEARXNG_TOKEN), or
+	// basic-auth credentials embedded in the URL (https://user:pass@host).
+	tok := w.SearxngToken
+	if tok == "" {
+		tok = os.Getenv("HARNESS_SEARXNG_TOKEN")
+	}
+	if tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	} else if req.URL.User != nil {
 		if pw, ok := req.URL.User.Password(); ok {

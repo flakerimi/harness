@@ -16,6 +16,7 @@ auth.json
 *.secret.json
 .secrets/
 mcp.json
+harness.json
 
 # OS / editor
 .DS_Store
