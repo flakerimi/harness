@@ -143,7 +143,7 @@ func TestRunDispatchesAndReplies(t *testing.T) {
 	responder := func(_ context.Context, chatID int64, user, text string) string {
 		return user + " said " + text + " in " + strconv.FormatInt(chatID, 10)
 	}
-	go func() { _ = b.Run(ctx, responder, nil) }()
+	go func() { _ = b.Run(ctx, responder, nil, nil) }()
 
 	<-sentOnce // a reply was delivered
 	cancel()   // now stop the loop

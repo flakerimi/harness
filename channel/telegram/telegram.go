@@ -41,10 +41,11 @@ func New(token string) *Bot {
 	}
 }
 
-// Update is one Telegram update.
+// Update is one Telegram update — a chat message or a tapped inline button.
 type Update struct {
-	UpdateID int64    `json:"update_id"`
-	Message  *Message `json:"message"`
+	UpdateID      int64          `json:"update_id"`
+	Message       *Message       `json:"message"`
+	CallbackQuery *CallbackQuery `json:"callback_query"`
 }
 
 // Message is an inbound chat message.
@@ -58,6 +59,31 @@ type Message struct {
 		Username  string `json:"username"`
 		FirstName string `json:"first_name"`
 	} `json:"from"`
+}
+
+// CallbackQuery is the event fired when a user taps an inline-keyboard button.
+type CallbackQuery struct {
+	ID      string   `json:"id"`
+	Data    string   `json:"data"` // the button's callback_data
+	Message *Message `json:"message"`
+	From    struct {
+		Username  string `json:"username"`
+		FirstName string `json:"first_name"`
+	} `json:"from"`
+}
+
+func (c *CallbackQuery) sender() string {
+	if c.From.Username != "" {
+		return "@" + c.From.Username
+	}
+	return c.From.FirstName
+}
+
+// Button is one inline-keyboard button: a label and the opaque data sent back
+// when it's tapped (max 64 bytes).
+type Button struct {
+	Text         string `json:"text"`
+	CallbackData string `json:"callback_data"`
 }
 
 func (m *Message) sender() string {
@@ -124,6 +150,57 @@ func (b *Bot) Send(ctx context.Context, chatID int64, text string) error {
 	return err
 }
 
+// SendKeyboard sends a message with an inline keyboard (rows of buttons).
+func (b *Bot) SendKeyboard(ctx context.Context, chatID int64, text string, rows [][]Button) error {
+	q := url.Values{}
+	q.Set("chat_id", strconv.FormatInt(chatID, 10))
+	q.Set("text", text)
+	if err := setMarkup(q, rows); err != nil {
+		return err
+	}
+	_, err := b.call(ctx, "sendMessage", q)
+	return err
+}
+
+// EditMessage replaces a message's text and inline keyboard in place — used to
+// drill from the provider list into a provider's models without new messages.
+func (b *Bot) EditMessage(ctx context.Context, chatID, messageID int64, text string, rows [][]Button) error {
+	q := url.Values{}
+	q.Set("chat_id", strconv.FormatInt(chatID, 10))
+	q.Set("message_id", strconv.FormatInt(messageID, 10))
+	q.Set("text", text)
+	if err := setMarkup(q, rows); err != nil {
+		return err
+	}
+	_, err := b.call(ctx, "editMessageText", q)
+	return err
+}
+
+// AnswerCallback acknowledges a tapped button (stops the client's spinner). An
+// optional toast text may be shown.
+func (b *Bot) AnswerCallback(ctx context.Context, callbackID, toast string) error {
+	q := url.Values{}
+	q.Set("callback_query_id", callbackID)
+	if toast != "" {
+		q.Set("text", toast)
+	}
+	_, err := b.call(ctx, "answerCallbackQuery", q)
+	return err
+}
+
+// setMarkup attaches an inline_keyboard reply_markup to a form.
+func setMarkup(q url.Values, rows [][]Button) error {
+	if rows == nil {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]any{"inline_keyboard": rows})
+	if err != nil {
+		return err
+	}
+	q.Set("reply_markup", string(payload))
+	return nil
+}
+
 func (b *Bot) call(ctx context.Context, method string, form url.Values) ([]byte, error) {
 	u := fmt.Sprintf("%s/bot%s/%s", strings.TrimRight(b.apiBase, "/"), b.token, method)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewBufferString(form.Encode()))
@@ -143,10 +220,16 @@ func (b *Bot) call(ctx context.Context, method string, form url.Values) ([]byte,
 	return body, nil
 }
 
-// Run long-polls and dispatches each text message to the responder, sending the
-// reply back. It returns when ctx is cancelled. Transient poll errors are
-// reported and retried after a short back-off so the loop survives blips.
-func (b *Bot) Run(ctx context.Context, h Responder, onError func(error)) error {
+// CallbackHandler handles a tapped inline button. It receives the chat and the
+// message the button is attached to (so it can EditMessage), the callbackID (to
+// AnswerCallback), the button's data, and the sender.
+type CallbackHandler func(ctx context.Context, chatID, messageID int64, callbackID, data, user string)
+
+// Run long-polls and dispatches text messages to the responder and button taps
+// to onCallback (may be nil), sending replies back. It returns when ctx is
+// cancelled. Transient poll errors are reported and retried after a short
+// back-off so the loop survives blips.
+func (b *Bot) Run(ctx context.Context, h Responder, onCallback CallbackHandler, onError func(error)) error {
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -165,12 +248,17 @@ func (b *Bot) Run(ctx context.Context, h Responder, onError func(error)) error {
 			continue
 		}
 		for _, u := range updates {
-			if u.Message == nil || strings.TrimSpace(u.Message.Text) == "" {
-				continue
-			}
-			reply := h(ctx, u.Message.Chat.ID, u.Message.sender(), u.Message.Text)
-			if err := b.Send(ctx, u.Message.Chat.ID, reply); err != nil && onError != nil {
-				onError(err)
+			switch {
+			case u.CallbackQuery != nil && u.CallbackQuery.Message != nil:
+				if onCallback != nil {
+					cq := u.CallbackQuery
+					onCallback(ctx, cq.Message.Chat.ID, cq.Message.MessageID, cq.ID, cq.Data, cq.sender())
+				}
+			case u.Message != nil && strings.TrimSpace(u.Message.Text) != "":
+				reply := h(ctx, u.Message.Chat.ID, u.Message.sender(), u.Message.Text)
+				if err := b.Send(ctx, u.Message.Chat.ID, reply); err != nil && onError != nil {
+					onError(err)
+				}
 			}
 		}
 	}

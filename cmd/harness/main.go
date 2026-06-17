@@ -1042,14 +1042,22 @@ func runTelegram(args []string) {
 			fmt.Fprintf(os.Stderr, "blocked chat %d (%s): %q\n", chatID, user, clip(text, 60))
 			return "🔒 This is a private assistant."
 		}
+		// /model (no args) and /models open the interactive provider→model menu.
+		if isMenuCommand(text) {
+			if err := bot.SendKeyboard(ctx, chatID, "Pick a provider:", providerMenuKeyboard()); err != nil {
+				fmt.Fprintln(os.Stderr, "telegram: menu:", err)
+			}
+			return ""
+		}
+
 		sessID := "tg-" + strconv.FormatInt(chatID, 10)
 		sess, err := store.Load(sessID)
 		if err != nil {
 			return "sorry — I couldn't load our conversation: " + err.Error()
 		}
 
-		// Slash commands (/, e.g. /model kimi) are handled here and never reach
-		// the model — they let you switch model, reset, etc. from the chat.
+		// Other slash commands (/model kimi, /reset, …) are handled here and never
+		// reach the model — they let you switch model, reset, etc. from the chat.
 		if reply, isCmd := telegramCommand(store, sess, text, *providerSlug); isCmd {
 			return reply
 		}
@@ -1088,8 +1096,42 @@ func runTelegram(args []string) {
 		return out
 	}
 
+	// onCallback handles inline-keyboard taps from the /model menu.
+	onCallback := func(ctx context.Context, chatID, messageID int64, callbackID, data, user string) {
+		if len(allowed) > 0 && !allowed[chatID] {
+			_ = bot.AnswerCallback(ctx, callbackID, "not allowed")
+			return
+		}
+		switch {
+		case data == "back":
+			_ = bot.EditMessage(ctx, chatID, messageID, "Pick a provider:", providerMenuKeyboard())
+			_ = bot.AnswerCallback(ctx, callbackID, "")
+		case strings.HasPrefix(data, "p:"):
+			slug := strings.TrimPrefix(data, "p:")
+			_ = bot.EditMessage(ctx, chatID, messageID, "Model for "+slug+":", modelMenuKeyboard(slug))
+			_ = bot.AnswerCallback(ctx, callbackID, "")
+		case strings.HasPrefix(data, "s:"):
+			slug, model, _ := strings.Cut(strings.TrimPrefix(data, "s:"), ":")
+			sessID := "tg-" + strconv.FormatInt(chatID, 10)
+			sess, err := store.Load(sessID)
+			if err != nil {
+				_ = bot.AnswerCallback(ctx, callbackID, "error")
+				return
+			}
+			sess.Provider = slug
+			sess.Model = model
+			if serr := store.Save(sess); serr != nil {
+				fmt.Fprintln(os.Stderr, "warning: save:", serr)
+			}
+			_ = bot.EditMessage(ctx, chatID, messageID, "✓ Now using "+slug+modelSuffix(model)+providerKeyWarning(slug), nil)
+			_ = bot.AnswerCallback(ctx, callbackID, "switched to "+slug)
+		default:
+			_ = bot.AnswerCallback(ctx, callbackID, "")
+		}
+	}
+
 	fmt.Fprintf(os.Stderr, "channel telegram · profile=%s · provider=%s — Ctrl-C to stop\n", profileName, *providerSlug)
-	if err := bot.Run(ctx, responder, func(e error) { fmt.Fprintln(os.Stderr, "telegram:", e) }); err != nil && err != context.Canceled {
+	if err := bot.Run(ctx, responder, onCallback, func(e error) { fmt.Fprintln(os.Stderr, "telegram:", e) }); err != nil && err != context.Canceled {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
@@ -1178,6 +1220,85 @@ func modelSuffix(model string) string {
 		return ""
 	}
 	return " (" + model + ")"
+}
+
+// isMenuCommand reports whether a message should open the provider→model menu:
+// "/models" or a bare "/model" (no provider argument).
+func isMenuCommand(text string) bool {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 0 || !strings.HasPrefix(fields[0], "/") {
+		return false
+	}
+	c := strings.ToLower(strings.TrimPrefix(fields[0], "/"))
+	c, _, _ = strings.Cut(c, "@")
+	return c == "models" || (c == "model" && len(fields) == 1)
+}
+
+type modelOpt struct{ label, id string }
+
+// modelsFor returns the curated model choices for a provider's menu. An empty
+// list means the provider only offers its default model.
+func modelsFor(slug string) []modelOpt {
+	switch slug {
+	case "deepseek":
+		return []modelOpt{{"v4-pro", "deepseek-v4-pro"}, {"v4-flash", "deepseek-v4-flash"}}
+	case "fireworks":
+		return []modelOpt{
+			{"kimi-k2p6", "accounts/fireworks/models/kimi-k2p6"},
+			{"deepseek-v4-pro (1M)", "accounts/fireworks/models/deepseek-v4-pro"},
+			{"kimi-k2p5", "accounts/fireworks/models/kimi-k2p5"},
+			{"glm-5p1", "accounts/fireworks/models/glm-5p1"},
+			{"gpt-oss-120b", "accounts/fireworks/models/gpt-oss-120b"},
+		}
+	case "mimo":
+		return []modelOpt{
+			{"v2.5-pro", "mimo-v2.5-pro"}, {"v2.5", "mimo-v2.5"},
+			{"v2-pro", "mimo-v2-pro"}, {"v2-flash", "mimo-v2-flash"}, {"v2-omni", "mimo-v2-omni"},
+		}
+	default:
+		return nil
+	}
+}
+
+// readyProviders lists providers usable right now for the menu: claude (OAuth)
+// plus any provider with a stored API key.
+func readyProviders() []string {
+	out := []string{"claude"}
+	cfg, _ := config.Load()
+	var rest []string
+	for slug, pc := range cfg.Providers {
+		if slug != "claude" && pc.APIKey != "" {
+			rest = append(rest, slug)
+		}
+	}
+	slices.Sort(rest)
+	return append(out, rest...)
+}
+
+// providerMenuKeyboard is the first menu level: a button per ready provider.
+func providerMenuKeyboard() [][]telegram.Button {
+	provs := readyProviders()
+	var rows [][]telegram.Button
+	var row []telegram.Button
+	for i, p := range provs {
+		row = append(row, telegram.Button{Text: p, CallbackData: "p:" + p})
+		if len(row) == 3 || i == len(provs)-1 {
+			rows = append(rows, row)
+			row = nil
+		}
+	}
+	return rows
+}
+
+// modelMenuKeyboard is the second level: the provider's default plus its curated
+// models, then a back button. Selecting sends "s:<slug>:<model>" ("" = default).
+func modelMenuKeyboard(slug string) [][]telegram.Button {
+	rows := [][]telegram.Button{{{Text: "✓ default", CallbackData: "s:" + slug + ":"}}}
+	for _, m := range modelsFor(slug) {
+		rows = append(rows, []telegram.Button{{Text: m.label, CallbackData: "s:" + slug + ":" + m.id}})
+	}
+	rows = append(rows, []telegram.Button{{Text: "‹ back", CallbackData: "back"}})
+	return rows
 }
 
 // providerKeyWarning reuses the real build logic to flag a provider that won't
