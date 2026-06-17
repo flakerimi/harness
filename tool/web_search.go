@@ -115,6 +115,16 @@ func (w WebSearch) searxng(ctx context.Context, client *http.Client, base, query
 	req.Header.Set("User-Agent", "harness/0.1 (+web_search)")
 	req.Header.Set("Accept", "application/json")
 
+	// Auth: a bearer token (HARNESS_SEARXNG_TOKEN), or basic-auth credentials
+	// embedded in HARNESS_SEARXNG_URL (https://user:pass@host).
+	if tok := os.Getenv("HARNESS_SEARXNG_TOKEN"); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	} else if req.URL.User != nil {
+		if pw, ok := req.URL.User.Password(); ok {
+			req.SetBasicAuth(req.URL.User.Username(), pw)
+		}
+	}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return Result{Content: "searxng: " + err.Error(), IsError: true}, nil
@@ -183,14 +193,13 @@ func parseDDG(body string, limit int) []searchResult {
 
 // decodeDDGRedirect unwraps DuckDuckGo's /l/?uddg=<encoded-url> result links.
 func decodeDDGRedirect(u string) string {
-	idx := strings.Index(u, "uddg=")
-	if idx < 0 {
+	_, tail, found := strings.Cut(u, "uddg=")
+	if !found {
 		if strings.HasPrefix(u, "//") {
 			return "https:" + u
 		}
 		return u
 	}
-	tail := u[idx+len("uddg="):]
 	tail, _, _ = strings.Cut(tail, "&")
 	if dec, err := url.QueryUnescape(tail); err == nil {
 		return dec
