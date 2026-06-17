@@ -75,6 +75,33 @@ func TestSendEncodesTokenAndPayload(t *testing.T) {
 	}
 }
 
+func TestSetCommands(t *testing.T) {
+	var gotPath, gotCommands string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = r.ParseForm()
+		gotCommands = r.Form.Get("commands")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+	}))
+	defer srv.Close()
+
+	b := botTo(srv.URL, "T")
+	err := b.SetCommands(context.Background(), []Command{
+		{Command: "model", Description: "switch model"},
+		{Command: "help", Description: "help"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/botT/setMyCommands" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if !strings.Contains(gotCommands, `"command":"model"`) || !strings.Contains(gotCommands, `"command":"help"`) {
+		t.Errorf("commands payload missing entries: %q", gotCommands)
+	}
+}
+
 func TestRunDispatchesAndReplies(t *testing.T) {
 	var mu sync.Mutex
 	var sent []string

@@ -1013,6 +1013,17 @@ func runTelegram(args []string) {
 	store := session.NewStore(profile.SessionsDir(profileName))
 	bot := telegram.New(tok)
 
+	// Advertise the slash commands in Telegram's "/" menu / autocomplete.
+	if err := bot.SetCommands(ctx, []telegram.Command{
+		{Command: "model", Description: "Switch model: /model <provider> [model]"},
+		{Command: "models", Description: "List providers and show the current one"},
+		{Command: "status", Description: "Show current model and conversation length"},
+		{Command: "reset", Description: "Start this conversation fresh"},
+		{Command: "help", Description: "Show available commands"},
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: setMyCommands:", err)
+	}
+
 	responder := func(ctx context.Context, chatID int64, user, text string) string {
 		sessID := "tg-" + strconv.FormatInt(chatID, 10)
 		sess, err := store.Load(sessID)

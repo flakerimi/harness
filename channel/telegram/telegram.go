@@ -91,6 +91,27 @@ func (b *Bot) GetUpdates(ctx context.Context, timeoutSecs int) ([]Update, error)
 	return out.Result, nil
 }
 
+// Command is a bot command advertised in Telegram's UI (the "/" menu and
+// autocomplete). Command is the name without a leading slash, lowercase.
+type Command struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}
+
+// SetCommands registers the command menu (Telegram setMyCommands), so the
+// commands surface in the client's command list instead of having to be known
+// in advance. Safe to call on every startup — it just overwrites the list.
+func (b *Bot) SetCommands(ctx context.Context, cmds []Command) error {
+	payload, err := json.Marshal(cmds)
+	if err != nil {
+		return err
+	}
+	q := url.Values{}
+	q.Set("commands", string(payload))
+	_, err = b.call(ctx, "setMyCommands", q)
+	return err
+}
+
 // Send delivers a text message to a chat.
 func (b *Bot) Send(ctx context.Context, chatID int64, text string) error {
 	if strings.TrimSpace(text) == "" {
