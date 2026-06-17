@@ -15,6 +15,7 @@ go.work.sum
 auth.json
 *.secret.json
 .secrets/
+mcp.json
 
 # OS / editor
 .DS_Store

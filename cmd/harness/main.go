@@ -18,6 +18,7 @@ import (
 	"github.com/flakerimi/harness/agent"
 	"github.com/flakerimi/harness/auth"
 	"github.com/flakerimi/harness/connector"
+	"github.com/flakerimi/harness/connector/mcp"
 	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/tool"
 )
@@ -42,7 +43,24 @@ func main() {
 func defaultConnectors() *connector.Registry {
 	r := connector.NewRegistry()
 	r.Add(connector.NewNative("builtin", tool.ReadFile{}, tool.WebFetch{}))
+
+	// External connectors come from mcp.json — add a server there and it shows
+	// up here with no code change. Nothing vendor-specific is baked in.
+	cfgs, err := mcp.LoadConfig(mcpConfigPath())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "warning: mcp config:", err)
+	}
+	for _, c := range cfgs {
+		r.Add(mcp.New(c))
+	}
 	return r
+}
+
+func mcpConfigPath() string {
+	if v := os.Getenv("HARNESS_MCP_FILE"); v != "" {
+		return v
+	}
+	return "mcp.json"
 }
 
 // runConnectors prints what the harness is connected to and the tools each
@@ -51,8 +69,13 @@ func runConnectors(args []string) {
 	fs := flag.NewFlagSet("connectors", flag.ExitOnError)
 	_ = fs.Parse(args)
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	for _, c := range defaultConnectors().Connectors() {
+		if cl, ok := c.(interface{ Close() error }); ok {
+			defer cl.Close()
+		}
 		st := c.Status(ctx)
 		mark := "✗ not connected"
 		if st.Connected {
