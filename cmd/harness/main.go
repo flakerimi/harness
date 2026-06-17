@@ -23,6 +23,7 @@ import (
 	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/router"
+	"github.com/flakerimi/harness/skill"
 	"github.com/flakerimi/harness/tool"
 )
 
@@ -41,9 +42,29 @@ func main() {
 		case "profiles":
 			runProfiles(os.Args[2:])
 			return
+		case "skills":
+			runSkills(os.Args[2:])
+			return
 		}
 	}
 	runAgent(os.Args[1:])
+}
+
+// runSkills lists the loaded Agent Skills (SKILL.md folders) — the procedural
+// know-how available to agents via progressive disclosure.
+func runSkills(_ []string) {
+	skills, errs := skill.Load()
+	for _, s := range skills {
+		fmt.Printf("%-16s %s\n", s.Name, s.Description)
+		fmt.Printf("    [%s]\n", s.Dir)
+	}
+	if len(skills) == 0 {
+		fmt.Println("(no skills)")
+	}
+	fmt.Fprintf(os.Stderr, "\nskill dirs: %s\n", strings.Join(skill.Dirs(), ", "))
+	for _, e := range errs {
+		fmt.Fprintln(os.Stderr, "warning:", e)
+	}
 }
 
 // runProfiles lists the available agent profiles (built-in + file-based) — the
@@ -326,6 +347,22 @@ func runAgent(args []string) {
 			shown = provider.DefaultModel(*providerSlug)
 		}
 		fmt.Fprintf(os.Stderr, "› provider=%s model=%s\n", prov.Name(), shown)
+	}
+
+	// Agent Skills: advertise names+descriptions in the system prompt, and add
+	// the load_skill tool so the model can pull full instructions on demand.
+	skills, skErrs := skill.Load()
+	for _, e := range skErrs {
+		fmt.Fprintln(os.Stderr, "warning: skill:", e)
+	}
+	if len(skills) > 0 {
+		if d := skill.DiscoveryText(skills); d != "" {
+			if opts.System != "" {
+				opts.System += "\n\n"
+			}
+			opts.System += d
+		}
+		toolReg.Register(skill.NewLoadTool(skills))
 	}
 
 	if err := agent.New(prov, toolReg, opts).Run(ctx, prompt, &cliHandler{}); err != nil {
