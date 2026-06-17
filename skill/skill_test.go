@@ -57,6 +57,77 @@ func TestLoadAndLoadTool(t *testing.T) {
 	}
 }
 
+func TestLearnTool(t *testing.T) {
+	dir := t.TempDir()
+	tl := NewLearnTool(dir)
+
+	in, _ := json.Marshal(map[string]string{
+		"name":         "Weekly Report!",
+		"description":  "Use to compile the Monday status report.\n(more detail)",
+		"instructions": "1. Gather updates.\n2. Summarize.",
+	})
+	res, err := tl.Run(context.Background(), in, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError || !strings.Contains(res.Content, "weekly-report") {
+		t.Fatalf("learn result = %q err=%v", res.Content, res.IsError)
+	}
+
+	// The slug is sanitized; only the first description line is kept.
+	raw, rerr := os.ReadFile(filepath.Join(dir, "weekly-report", "SKILL.md"))
+	if rerr != nil {
+		t.Fatalf("skill file not written: %v", rerr)
+	}
+	got := string(raw)
+	if !strings.Contains(got, "name: weekly-report") ||
+		!strings.Contains(got, "description: Use to compile the Monday status report.") ||
+		strings.Contains(got, "(more detail)") ||
+		!strings.Contains(got, "1. Gather updates.") {
+		t.Errorf("unexpected SKILL.md:\n%s", got)
+	}
+
+	// A loaded skill should now appear and take precedence over a shared skill.
+	skills, _ := Load(dir)
+	var ok bool
+	for _, s := range skills {
+		if s.Name == "weekly-report" {
+			ok = true
+		}
+	}
+	if !ok {
+		t.Error("learned skill not discoverable via Load")
+	}
+}
+
+func TestLearnToolValidation(t *testing.T) {
+	tl := NewLearnTool(t.TempDir())
+	in, _ := json.Marshal(map[string]string{"name": "", "description": "d", "instructions": "i"})
+	res, _ := tl.Run(context.Background(), in, nil)
+	if !res.IsError {
+		t.Error("empty name should be a validation error")
+	}
+}
+
+func TestProfileSkillsWin(t *testing.T) {
+	shared := t.TempDir()
+	prof := t.TempDir()
+	writeSkill(t, shared, "report", "shared version", "shared body")
+	writeSkill(t, prof, "report", "profile version", "profile body")
+	t.Setenv("HARNESS_SKILLS_DIR", shared)
+
+	skills, _ := Load(prof) // extraDirs (profile) scanned first → wins
+	var desc string
+	for _, s := range skills {
+		if s.Name == "report" {
+			desc = s.Description
+		}
+	}
+	if desc != "profile version" {
+		t.Errorf("profile skill should win, got %q", desc)
+	}
+}
+
 func TestDiscoveryText(t *testing.T) {
 	skills := []Skill{{Name: "haiku", Description: "Use for haiku."}}
 	d := DiscoveryText(skills)

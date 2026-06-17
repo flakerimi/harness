@@ -40,13 +40,15 @@ func Dirs() []string {
 	return dirs
 }
 
-// Load scans the skill dirs for <skill>/SKILL.md files. The first skill found
-// for a given name wins; later dirs don't override earlier ones.
-func Load() ([]Skill, []error) {
+// Load scans the skill dirs (extraDirs first — e.g. a profile's learned skills —
+// then the shared dirs) for <skill>/SKILL.md files. The first skill found for a
+// given name wins, so a profile's skills take precedence.
+func Load(extraDirs ...string) ([]Skill, []error) {
 	seen := map[string]bool{}
 	var skills []Skill
 	var errs []error
-	for _, dir := range Dirs() {
+	dirs := append(append([]string{}, extraDirs...), Dirs()...)
+	for _, dir := range dirs {
 		matches, _ := filepath.Glob(filepath.Join(dir, "*", "SKILL.md"))
 		for _, path := range matches {
 			s, err := loadFile(path)
@@ -148,6 +150,88 @@ func (t *LoadTool) Run(_ context.Context, input json.RawMessage, _ *tool.Env) (t
 		}, nil
 	}
 	return tool.Result{Content: s.Body}, nil
+}
+
+// LearnTool is the learn_skill tool: the agent saves a reusable workflow it
+// worked out as a new SKILL.md under the given directory (a profile's skills
+// dir), so the procedure is available — by name — in future conversations.
+// This is the self-improvement loop: the assistant teaches itself.
+type LearnTool struct {
+	dir string
+}
+
+// NewLearnTool builds the learn_skill tool writing to dir.
+func NewLearnTool(dir string) *LearnTool { return &LearnTool{dir: dir} }
+
+func (LearnTool) Spec() tool.Spec {
+	return tool.Spec{
+		Name:        "learn_skill",
+		Description: "Save a reusable workflow you figured out as a skill, so you can reuse it by name later. Use this after solving a non-trivial, repeatable task. Provide a short name, a one-line description of when to use it, and clear step-by-step instructions.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name":         map[string]any{"type": "string", "description": "Short skill name (kebab-case), e.g. \"weekly-report\"."},
+				"description":  map[string]any{"type": "string", "description": "One line: when this skill should be used."},
+				"instructions": map[string]any{"type": "string", "description": "The step-by-step procedure to follow when this skill is loaded."},
+			},
+			"required": []string{"name", "description", "instructions"},
+		},
+	}
+}
+
+func (t *LearnTool) Run(_ context.Context, input json.RawMessage, _ *tool.Env) (tool.Result, error) {
+	var args struct {
+		Name         string `json:"name"`
+		Description  string `json:"description"`
+		Instructions string `json:"instructions"`
+	}
+	if err := json.Unmarshal(input, &args); err != nil {
+		return tool.Result{Content: "invalid input: " + err.Error(), IsError: true}, nil
+	}
+	slug := sanitizeSkillName(args.Name)
+	desc := strings.TrimSpace(firstLine(args.Description))
+	body := strings.TrimSpace(args.Instructions)
+	if slug == "" || desc == "" || body == "" {
+		return tool.Result{Content: "name, description, and instructions are all required", IsError: true}, nil
+	}
+	if t.dir == "" {
+		return tool.Result{Content: "no skills directory configured for this profile", IsError: true}, nil
+	}
+	dir := filepath.Join(t.dir, slug)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return tool.Result{Content: err.Error(), IsError: true}, nil
+	}
+	content := fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n%s\n", slug, desc, body)
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o644); err != nil {
+		return tool.Result{Content: err.Error(), IsError: true}, nil
+	}
+	return tool.Result{Content: "learned skill: " + slug}, nil
+}
+
+// sanitizeSkillName turns an arbitrary name into a safe kebab-case slug usable
+// as a directory name.
+func sanitizeSkillName(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	prevDash := false
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevDash = false
+		default:
+			if !prevDash && b.Len() > 0 {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return line
 }
 
 // splitFrontmatter parses optional leading "---\n … \n---" frontmatter (simple

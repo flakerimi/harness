@@ -78,6 +78,11 @@ func MemoryDir(name string) string {
 	return filepath.Join(DataDir(name), "memory")
 }
 
+// SkillsDir is the per-profile skills directory (skills the identity learned).
+func SkillsDir(name string) string {
+	return filepath.Join(DataDir(name), "skills")
+}
+
 // Dirs returns the directories scanned for *.md profile files: a project-local
 // ./profiles, plus $HARNESS_PROFILES_DIR (or <user-config-dir>/harness/profiles).
 func Dirs() []string {

@@ -87,9 +87,21 @@ func runMemory(args []string) {
 }
 
 // runSkills lists the loaded Agent Skills (SKILL.md folders) — the procedural
-// know-how available to agents via progressive disclosure.
-func runSkills(_ []string) {
-	skills, errs := skill.Load()
+// know-how available to agents via progressive disclosure. The active identity's
+// own learned-skills dir is included.
+func runSkills(args []string) {
+	fs := flag.NewFlagSet("skills", flag.ExitOnError)
+	profileFlag := fs.String("profile", "", "identity profile (default from config)")
+	_ = fs.Parse(args)
+	name := *profileFlag
+	if name == "" {
+		name = activeProfile()
+	}
+	var dirs []string
+	if name != "" {
+		dirs = append(dirs, profile.SkillsDir(name))
+	}
+	skills, errs := skill.Load(dirs...)
 	for _, s := range skills {
 		fmt.Printf("%-16s %s\n", s.Name, s.Description)
 		fmt.Printf("    [%s]\n", s.Dir)
@@ -97,7 +109,8 @@ func runSkills(_ []string) {
 	if len(skills) == 0 {
 		fmt.Println("(no skills)")
 	}
-	fmt.Fprintf(os.Stderr, "\nskill dirs: %s\n", strings.Join(skill.Dirs(), ", "))
+	allDirs := append(dirs, skill.Dirs()...)
+	fmt.Fprintf(os.Stderr, "\nskill dirs: %s\n", strings.Join(allDirs, ", "))
 	for _, e := range errs {
 		fmt.Fprintln(os.Stderr, "warning:", e)
 	}
@@ -421,8 +434,13 @@ func runAgent(args []string) {
 
 	// Agent Skills: register the load_skill tool into reg so both the
 	// orchestrator and any delegated workers get it, and build the discovery
-	// text that advertises skills in the system prompt.
-	skills, skErrs := skill.Load()
+	// text that advertises skills in the system prompt. For an identity profile,
+	// its own learned-skills dir is scanned first (and wins on name conflicts).
+	var skillDirs []string
+	if profileName != "" {
+		skillDirs = append(skillDirs, profile.SkillsDir(profileName))
+	}
+	skills, skErrs := skill.Load(skillDirs...)
 	for _, e := range skErrs {
 		fmt.Fprintln(os.Stderr, "warning: skill:", e)
 	}
@@ -511,6 +529,10 @@ func runAgent(args []string) {
 			opts.System += mc
 		}
 		toolReg.Register(memory.NewRememberTool(memStore))
+
+		// Self-improvement: let the identity write new skills it works out into
+		// its own skills dir, so the procedure is reusable by name next time.
+		toolReg.Register(skill.NewLearnTool(profile.SkillsDir(profileName)))
 	}
 
 	if err := agent.New(prov, toolReg, opts).Run(ctx, prompt, &cliHandler{}); err != nil {
