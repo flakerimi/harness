@@ -17,16 +17,58 @@ import (
 
 	"github.com/flakerimi/harness/agent"
 	"github.com/flakerimi/harness/auth"
+	"github.com/flakerimi/harness/connector"
 	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/tool"
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "login" {
-		runLogin(os.Args[2:])
-		return
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "login":
+			runLogin(os.Args[2:])
+			return
+		case "connectors":
+			runConnectors(os.Args[2:])
+			return
+		}
 	}
 	runAgent(os.Args[1:])
+}
+
+// defaultConnectors wires the integrations available to this harness instance.
+// Native built-ins are always present; external connectors (calendar, mail,
+// search via MCP) are added here as they're built — never hardcoded deeper in.
+func defaultConnectors() *connector.Registry {
+	r := connector.NewRegistry()
+	r.Add(connector.NewNative("builtin", tool.ReadFile{}, tool.WebFetch{}))
+	return r
+}
+
+// runConnectors prints what the harness is connected to and the tools each
+// connector exposes — the introspection surface for "where are we connected".
+func runConnectors(args []string) {
+	fs := flag.NewFlagSet("connectors", flag.ExitOnError)
+	_ = fs.Parse(args)
+
+	ctx := context.Background()
+	for _, c := range defaultConnectors().Connectors() {
+		st := c.Status(ctx)
+		mark := "✗ not connected"
+		if st.Connected {
+			mark = "✓ connected"
+		}
+		fmt.Printf("%s  %s — %s\n", mark, c.Name(), st.Detail)
+		ts, err := c.Tools(ctx)
+		if err != nil {
+			fmt.Printf("    (error listing tools: %v)\n", err)
+			continue
+		}
+		for _, t := range ts {
+			s := t.Spec()
+			fmt.Printf("    • %s — %s\n", s.Name, s.Description)
+		}
+	}
 }
 
 func authFileDefault() string {
@@ -105,8 +147,14 @@ func runAgent(args []string) {
 		modelID = provider.DefaultModel(*providerSlug)
 	}
 
-	reg := tool.NewRegistry()
-	reg.Register(tool.ReadFile{})
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	reg, err := defaultConnectors().Tools(ctx)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
 
 	ag := agent.New(prov, reg, agent.Options{
 		Model:     modelID,
@@ -115,9 +163,6 @@ func runAgent(args []string) {
 		Caps:      []string{provider.CapTools, provider.CapCaching},
 		Env:       &tool.Env{Root: *root},
 	})
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
 
 	fmt.Fprintf(os.Stderr, "› provider=%s model=%s\n", prov.Name(), modelID)
 	if err := ag.Run(ctx, prompt, &cliHandler{}); err != nil {
