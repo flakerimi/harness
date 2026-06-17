@@ -298,6 +298,19 @@ func runAgent(args []string) {
 	}
 	toolReg := reg // tools the orchestrator uses
 
+	// Agent Skills: register the load_skill tool into reg so both the
+	// orchestrator and any delegated workers get it, and build the discovery
+	// text that advertises skills in the system prompt.
+	skills, skErrs := skill.Load()
+	for _, e := range skErrs {
+		fmt.Fprintln(os.Stderr, "warning: skill:", e)
+	}
+	skillDiscovery := ""
+	if len(skills) > 0 {
+		reg.Register(skill.NewLoadTool(skills))
+		skillDiscovery = skill.DiscoveryText(skills)
+	}
+
 	// Routing is on when requested, or implied by a profile.
 	var rt *router.Table
 	if (*model == "" && *route) || *profileFlag != "" {
@@ -323,16 +336,20 @@ func runAgent(args []string) {
 		opts.BaseTier = prof.BaseTier
 		opts.Classify = false // the profile sets the orchestrator's tier
 		if prof.Delegate {
+			workerSystem := prof.WorkerPersona
+			if skillDiscovery != "" {
+				workerSystem += "\n\n" + skillDiscovery
+			}
 			orch := tool.NewRegistry()
-			for _, t := range reg.All() {
+			for _, t := range reg.All() { // reg already includes load_skill
 				orch.Register(t)
 			}
 			orch.Register(agent.Delegate{
 				Provider:  prov,
-				Tools:     reg, // worker uses the connector tools (no delegate → no recursion)
+				Tools:     reg, // worker gets the connector tools + load_skill (no delegate → no recursion)
 				Router:    rt,
 				Tier:      prof.WorkerTier,
-				System:    prof.WorkerPersona,
+				System:    workerSystem,
 				MaxTokens: *maxTokens,
 				Caps:      caps,
 			})
@@ -349,20 +366,13 @@ func runAgent(args []string) {
 		fmt.Fprintf(os.Stderr, "› provider=%s model=%s\n", prov.Name(), shown)
 	}
 
-	// Agent Skills: advertise names+descriptions in the system prompt, and add
-	// the load_skill tool so the model can pull full instructions on demand.
-	skills, skErrs := skill.Load()
-	for _, e := range skErrs {
-		fmt.Fprintln(os.Stderr, "warning: skill:", e)
-	}
-	if len(skills) > 0 {
-		if d := skill.DiscoveryText(skills); d != "" {
-			if opts.System != "" {
-				opts.System += "\n\n"
-			}
-			opts.System += d
+	// Append skill discovery to the orchestrator's system prompt (after a
+	// profile may have set it). The load_skill tool is already in toolReg.
+	if skillDiscovery != "" {
+		if opts.System != "" {
+			opts.System += "\n\n"
 		}
-		toolReg.Register(skill.NewLoadTool(skills))
+		opts.System += skillDiscovery
 	}
 
 	if err := agent.New(prov, toolReg, opts).Run(ctx, prompt, &cliHandler{}); err != nil {
