@@ -2,7 +2,9 @@ package google
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -89,7 +91,119 @@ func TestStatusAndToolsGate(t *testing.T) {
 	if !c.Status(context.Background()).Connected {
 		t.Error("should be connected after credentials saved")
 	}
-	if ts, _ := c.Tools(context.Background()); len(ts) != 2 {
-		t.Errorf("want 2 calendar tools after login, got %d", len(ts))
+	if ts, _ := c.Tools(context.Background()); len(ts) != 4 {
+		t.Errorf("want 4 tools (calendar + gmail) after login, got %d", len(ts))
+	}
+}
+
+func connWithServer(t *testing.T, url string) *Connector {
+	t.Helper()
+	store := storeWithGoogle(t)
+	return &Connector{
+		store:   store,
+		tokens:  auth.NewGoogleTokenSource(store, "id", "sec"),
+		http:    http.DefaultClient,
+		apiBase: url,
+	}
+}
+
+func TestGmailListTool(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok-access" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/gmail/v1/users/me/messages":
+			if r.URL.Query().Get("q") != "is:unread" {
+				t.Errorf("query not forwarded: %q", r.URL.Query().Get("q"))
+			}
+			_, _ = w.Write([]byte(`{"messages":[{"id":"m1"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/messages/m1"):
+			if r.URL.Query().Get("format") != "metadata" {
+				t.Errorf("expected metadata format, got %q", r.URL.Query().Get("format"))
+			}
+			_, _ = w.Write([]byte(`{"id":"m1","snippet":"Let's sync on the plan",
+				"payload":{"headers":[
+					{"name":"From","value":"Orjeta <orjeta.r@tpr.al>"},
+					{"name":"Subject","value":"Quarterly plan"},
+					{"name":"Date","value":"Mon, 16 Jun 2026 10:00:00 +0200"}]}}`))
+		default:
+			http.Error(w, "not found: "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := connWithServer(t, srv.URL)
+	in, _ := json.Marshal(map[string]any{"query": "is:unread"})
+	res, err := (&gmailListTool{c: c}).Run(context.Background(), in, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Content)
+	}
+	for _, want := range []string{"Quarterly plan", "orjeta.r@tpr.al", "Let's sync on the plan", "id: m1"} {
+		if !strings.Contains(res.Content, want) {
+			t.Errorf("list result missing %q:\n%s", want, res.Content)
+		}
+	}
+}
+
+func TestGmailGetTool(t *testing.T) {
+	plain := base64.RawURLEncoding.EncodeToString([]byte("Hello — here is the full plan.\nRegards."))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/messages/m1") || r.URL.Query().Get("format") != "full" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"id":"m1","snippet":"snip",
+			"payload":{"mimeType":"multipart/alternative",
+				"headers":[
+					{"name":"From","value":"Boss <boss@x.com>"},
+					{"name":"To","value":"me@x.com"},
+					{"name":"Subject","value":"The plan"},
+					{"name":"Date","value":"Mon, 16 Jun 2026 10:00:00 +0200"}],
+				"parts":[
+					{"mimeType":"text/plain","body":{"data":%q}},
+					{"mimeType":"text/html","body":{"data":"PGI+aGk8L2I+"}}]}}`, plain)
+	}))
+	defer srv.Close()
+
+	c := connWithServer(t, srv.URL)
+	in, _ := json.Marshal(map[string]any{"message_id": "m1"})
+	res, err := (&gmailGetTool{c: c}).Run(context.Background(), in, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Content)
+	}
+	for _, want := range []string{"Subject: The plan", "Boss <boss@x.com>", "To: me@x.com", "here is the full plan", "Regards."} {
+		if !strings.Contains(res.Content, want) {
+			t.Errorf("get result missing %q:\n%s", want, res.Content)
+		}
+	}
+}
+
+func TestGmailGetValidation(t *testing.T) {
+	c := connWithServer(t, "http://unused")
+	in, _ := json.Marshal(map[string]any{"message_id": ""})
+	res, _ := (&gmailGetTool{c: c}).Run(context.Background(), in, nil)
+	if !res.IsError {
+		t.Error("empty message_id should be a validation error")
+	}
+}
+
+func TestDecodeB64(t *testing.T) {
+	raw := base64.RawURLEncoding.EncodeToString([]byte("hi there"))
+	if got := decodeB64(raw); got != "hi there" {
+		t.Errorf("decodeB64(raw url) = %q", got)
+	}
+	padded := base64.URLEncoding.EncodeToString([]byte("hi there"))
+	if got := decodeB64(padded); got != "hi there" {
+		t.Errorf("decodeB64(padded url) = %q", got)
 	}
 }
