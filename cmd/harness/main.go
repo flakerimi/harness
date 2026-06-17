@@ -145,7 +145,7 @@ func maskURLSecret(raw string) string {
 // defaultConnectors wires the integrations available to this harness instance.
 // Native built-ins are always present; external connectors (calendar, mail,
 // search via MCP) are added here as they're built — never hardcoded deeper in.
-func defaultConnectors(allowShell bool) *connector.Registry {
+func defaultConnectors(allowShell bool, profileName string) *connector.Registry {
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "warning: config:", err)
@@ -161,10 +161,11 @@ func defaultConnectors(allowShell bool) *connector.Registry {
 	r := connector.NewRegistry()
 	r.Add(connector.NewNative("builtin", tools...))
 
-	// Google connector when an OAuth client is configured (connect via
-	// `harness connect google`).
+	// Google connector when an OAuth client is configured — scoped to this
+	// profile's own auth file, so different identities connect different Google
+	// accounts (connect via `harness connect google`).
 	if id, secret := cfg.GoogleClient(); id != "" && secret != "" {
-		r.Add(google.New(auth.NewStore(authFileDefault()), id, secret))
+		r.Add(google.New(auth.NewStore(profile.AuthFile(profileName)), id, secret))
 	}
 
 	// External connectors come from mcp.json — add a server there and it shows
@@ -195,7 +196,7 @@ func runConnectors(args []string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	for _, c := range defaultConnectors(false).Connectors() {
+	for _, c := range defaultConnectors(false, activeProfile()).Connectors() {
 		if cl, ok := c.(interface{ Close() error }); ok {
 			defer cl.Close()
 		}
@@ -222,6 +223,12 @@ func authFileDefault() string {
 		return v
 	}
 	return "auth.json"
+}
+
+// activeProfile resolves the identity profile from env/config (no flag context).
+func activeProfile() string {
+	cfg, _ := config.Load()
+	return cfg.Profile()
 }
 
 func runLogin(args []string) {
@@ -268,19 +275,35 @@ func runLogin(args []string) {
 // integrations (Google, …), distinct from `login` (the model provider).
 func runConnect(args []string) {
 	fs := flag.NewFlagSet("connect", flag.ExitOnError)
-	authFile := fs.String("auth-file", authFileDefault(), "credential file to write")
+	profileFlag := fs.String("profile", "", "identity to attach the account to (default from config)")
 	_ = fs.Parse(args)
+
+	profileName := *profileFlag
+	if profileName == "" {
+		profileName = activeProfile()
+	}
+	// Accounts are profile-scoped — store in this identity's own data dir.
+	if err := os.MkdirAll(profile.DataDir(profileName), 0o700); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	authFile := profile.AuthFile(profileName)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	store := auth.NewStore(*authFile)
+	store := auth.NewStore(authFile)
 	onURL := func(u string) { fmt.Fprintln(os.Stderr, "If your browser didn't open, visit:\n  "+u) }
 
+	label := profileName
+	if label == "" {
+		label = "(default)"
+	}
 	switch strings.ToLower(strings.TrimSpace(fs.Arg(0))) {
 	case "google":
-		connectGoogle(ctx, store, *authFile, onURL)
+		fmt.Fprintf(os.Stderr, "Connecting Google for identity %q…\n", label)
+		connectGoogle(ctx, store, authFile, onURL)
 	case "":
-		fmt.Fprintln(os.Stderr, "usage: harness connect <service>   (services: google)")
+		fmt.Fprintln(os.Stderr, "usage: harness connect <service> [-profile <name>]   (services: google)")
 		os.Exit(2)
 	default:
 		fmt.Fprintf(os.Stderr, "connect: unknown service %q (services: google)\n", fs.Arg(0))
@@ -348,7 +371,7 @@ func runAgent(args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	reg, err := defaultConnectors(*bash).Tools(ctx)
+	reg, err := defaultConnectors(*bash, profileName).Tools(ctx)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)

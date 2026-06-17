@@ -54,6 +54,25 @@ var builtins = map[string]Profile{
 	workProfile.Name:     workProfile,
 }
 
+// DataDir returns a profile's own data directory — its scoped store of
+// credentials, connected accounts, and skills (like Construct's profile-scoped
+// storage). An empty name returns the shared base dir.
+func DataDir(name string) string {
+	base := "."
+	if ucd, err := os.UserConfigDir(); err == nil {
+		base = filepath.Join(ucd, "harness")
+	}
+	if name == "" {
+		return base
+	}
+	return filepath.Join(base, "profiles", name)
+}
+
+// AuthFile is the credential file for a profile (its connected accounts).
+func AuthFile(name string) string {
+	return filepath.Join(DataDir(name), "auth.json")
+}
+
 // Dirs returns the directories scanned for *.md profile files: a project-local
 // ./profiles, plus $HARNESS_PROFILES_DIR (or <user-config-dir>/harness/profiles).
 func Dirs() []string {
