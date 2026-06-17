@@ -152,20 +152,27 @@ func scheduleRunDue(store *schedule.Store) {
 	}
 }
 
-func scheduleDaemon(store *schedule.Store, args []string) {
+func scheduleDaemon(_ *schedule.Store, args []string) {
 	fs := flag.NewFlagSet("schedule daemon", flag.ExitOnError)
 	interval := fs.Duration("interval", time.Minute, "how often to check for due tasks")
 	_ = fs.Parse(args)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	fmt.Fprintf(os.Stderr, "schedule daemon: checking every %s — Ctrl-C to stop\n", *interval)
-	ticker := time.NewTicker(*interval)
+	runScheduler(ctx, *interval)
+	fmt.Fprintln(os.Stderr, "\nstopped")
+}
+
+// runScheduler fires due tasks every interval until ctx is cancelled. It is the
+// reusable core shared by `schedule daemon` and the daemon supervisor.
+func runScheduler(ctx context.Context, interval time.Duration) {
+	store := schedule.NewStore(profile.ScheduleDir())
+	fmt.Fprintf(os.Stderr, "scheduler: checking every %s\n", interval)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		runDueOnce(ctx, store, time.Now())
 		select {
 		case <-ctx.Done():
-			fmt.Fprintln(os.Stderr, "\nstopped")
 			return
 		case <-ticker.C:
 		}

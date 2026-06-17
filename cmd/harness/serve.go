@@ -37,30 +37,62 @@ func runServe(args []string) {
 	_ = fs.Parse(args)
 
 	tok := resolveAPIToken(*token, *open)
+	srv := buildAPIServer(apiOptions{
+		Provider: *providerSlug, Model: *model, MaxTokens: *maxTokens,
+		Root: *root, Bash: *bash, Compact: *compact, Token: tok,
+	})
 
-	srv := &server.Server{
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	authMsg := "auth: token required"
+	if tok == "" {
+		authMsg = "auth: OPEN (no token — localhost only)"
+	}
+	fmt.Fprintf(os.Stderr, "harness serve · %s · default profile %q · %s\n", *addr, activeProfile(), authMsg)
+	if err := serveHTTP(ctx, *addr, srv.Handler()); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	fmt.Fprintln(os.Stderr, "stopped")
+}
+
+// apiOptions configures the HTTP API server, shared by serve and the daemon.
+type apiOptions struct {
+	Provider  string
+	Model     string
+	MaxTokens int
+	Root      string
+	Bash      bool
+	Compact   int
+	Token     string
+}
+
+// buildAPIServer wires the HTTP API (agent factory + session store + profiles).
+func buildAPIServer(o apiOptions) *server.Server {
+	return &server.Server{
 		DefaultProfile: activeProfile(),
-		Token:          tok,
+		Token:          o.Token,
 		Factory: func(ctx context.Context, profileName, provSlug, modelID string) (*agent.Agent, error) {
 			if provSlug == "" {
-				provSlug = *providerSlug
+				provSlug = o.Provider
 			}
 			if modelID == "" {
-				modelID = *model
+				modelID = o.Model
 			}
 			return app.Build(ctx, app.Spec{
 				Provider:  provSlug,
 				Model:     modelID,
 				System:    "You are a helpful assistant.",
-				MaxTokens: *maxTokens,
-				Root:      *root,
+				MaxTokens: o.MaxTokens,
+				Root:      o.Root,
 				Profile:   profileName,
 				Tier:      "reasoning",
 				Route:     true,
 				Classify:  false,
 				Escalate:  true,
-				Bash:      *bash,
-				Compact:   *compact,
+				Bash:      o.Bash,
+				Compact:   o.Compact,
 			})
 		},
 		Sessions: func(profileName string) *session.Store {
@@ -68,28 +100,22 @@ func runServe(args []string) {
 		},
 		Profiles: profileInfos,
 	}
+}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
-	hs := &http.Server{Addr: *addr, Handler: srv.Handler()}
+// serveHTTP runs an HTTP server until ctx is cancelled, then shuts it down
+// gracefully. Reusable by serve and the daemon supervisor.
+func serveHTTP(ctx context.Context, addr string, h http.Handler) error {
+	hs := &http.Server{Addr: addr, Handler: h}
 	go func() {
 		<-ctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = hs.Shutdown(shutCtx)
 	}()
-
-	authMsg := "auth: token required"
-	if tok == "" {
-		authMsg = "auth: OPEN (no token — localhost only)"
-	}
-	fmt.Fprintf(os.Stderr, "harness serve · %s · default profile %q · %s\n", *addr, activeProfile(), authMsg)
 	if err := hs.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		return err
 	}
-	fmt.Fprintln(os.Stderr, "stopped")
+	return nil
 }
 
 // profileInfos lists the identities for the API.

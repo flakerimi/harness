@@ -60,6 +60,9 @@ func main() {
 		case "serve":
 			runServe(os.Args[2:])
 			return
+		case "daemon":
+			runDaemon(os.Args[2:])
+			return
 		case "channel":
 			runChannel(os.Args[2:])
 			return

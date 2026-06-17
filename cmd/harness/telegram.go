@@ -38,9 +38,16 @@ func runChannel(args []string) {
 	}
 }
 
-// runTelegram runs the Telegram bot loop. Each chat resumes its own session and
-// can switch identity (/profile) and model (/model) in-chat; each identity keeps
-// its own account, memory, and conversation thread.
+// telegramOptions configures the bot loop, shared by the CLI and the daemon.
+type telegramOptions struct {
+	Token    string // bot token; empty falls back to $TELEGRAM_BOT_TOKEN
+	Provider string // default model provider for chats that haven't picked one
+	Profile  string // default identity; empty falls back to config
+	Allow    string // comma-separated allowed chat ids; empty falls back to env
+	Compact  int
+}
+
+// runTelegram is the CLI entry: parse flags, then run the bot until interrupted.
 func runTelegram(args []string) {
 	fs := flag.NewFlagSet("channel telegram", flag.ExitOnError)
 	token := fs.String("token", "", "Telegram bot token (or $TELEGRAM_BOT_TOKEN)")
@@ -50,34 +57,51 @@ func runTelegram(args []string) {
 	allow := fs.String("allow", "", "comma-separated Telegram chat ids allowed to use the bot (or $HARNESS_TELEGRAM_ALLOW); empty = open to anyone")
 	_ = fs.Parse(args)
 
-	tok := *token
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	err := runTelegramBot(ctx, telegramOptions{
+		Token: *token, Provider: *providerSlug, Profile: *profileFlag, Allow: *allow, Compact: *compact,
+	})
+	if err != nil && err != context.Canceled {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	fmt.Fprintln(os.Stderr, "stopped")
+}
+
+// runTelegramBot builds and runs the bot loop until ctx is cancelled. It is the
+// reusable core shared by the CLI and the daemon supervisor; it returns an error
+// (e.g. no token) rather than exiting, so the daemon can skip it and keep going.
+func runTelegramBot(ctx context.Context, o telegramOptions) error {
+	tok := o.Token
 	if tok == "" {
 		tok = os.Getenv("TELEGRAM_BOT_TOKEN")
 	}
 	if tok == "" {
-		fmt.Fprintln(os.Stderr, "a bot token is required: -token <t> or $TELEGRAM_BOT_TOKEN (create one via @BotFather)")
-		os.Exit(2)
+		return fmt.Errorf("telegram: no bot token (set -token or $TELEGRAM_BOT_TOKEN, from @BotFather)")
+	}
+	launchProvider := o.Provider
+	if launchProvider == "" {
+		launchProvider = "mock"
 	}
 
-	defaultProfile := *profileFlag
+	defaultProfile := o.Profile
 	if defaultProfile == "" {
 		cfg, _ := config.Load()
 		defaultProfile = cfg.Profile()
 	}
 
-	allowSpec := *allow
+	allowSpec := o.Allow
 	if allowSpec == "" {
 		allowSpec = os.Getenv("HARNESS_TELEGRAM_ALLOW")
 	}
 	allowed := parseChatIDs(allowSpec)
 	if len(allowed) == 0 {
-		fmt.Fprintln(os.Stderr, "⚠ no -allow set: this bot is OPEN to anyone who finds it (they can spend your model credits)")
+		fmt.Fprintln(os.Stderr, "⚠ telegram: no allowlist — OPEN to anyone who finds the bot")
 	} else {
-		fmt.Fprintf(os.Stderr, "allowlist: %d chat(s) permitted\n", len(allowed))
+		fmt.Fprintf(os.Stderr, "telegram: allowlist of %d chat(s)\n", len(allowed))
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
 
 	identities := newChatIdentities()
 	storeFor := func(p string) *session.Store { return session.NewStore(profile.SessionsDir(p)) }
@@ -125,12 +149,12 @@ func runTelegram(args []string) {
 		}
 
 		// Model/reset/status/help commands operate on the current identity's session.
-		if reply, isCmd := telegramCommand(store, sess, text, *providerSlug, curProfile); isCmd {
+		if reply, isCmd := telegramCommand(store, sess, text, launchProvider, curProfile); isCmd {
 			return reply
 		}
 
 		// Per-chat provider/model override (set via /model), else the launch flag.
-		provSlug := firstNonEmpty(sess.Provider, *providerSlug)
+		provSlug := firstNonEmpty(sess.Provider, launchProvider)
 		ag, err := app.Build(ctx, app.Spec{
 			Provider:  provSlug,
 			Model:     sess.Model,
@@ -142,7 +166,7 @@ func runTelegram(args []string) {
 			Route:     true,
 			Classify:  false,
 			Escalate:  true,
-			Compact:   *compact,
+			Compact:   o.Compact,
 		})
 		if err != nil {
 			return "sorry — I hit a setup error: " + err.Error()
@@ -199,12 +223,8 @@ func runTelegram(args []string) {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "channel telegram · default identity=%s · provider=%s — Ctrl-C to stop\n", defaultProfile, *providerSlug)
-	if err := bot.Run(ctx, responder, onCallback, func(e error) { fmt.Fprintln(os.Stderr, "telegram:", e) }); err != nil && err != context.Canceled {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
-	}
-	fmt.Fprintln(os.Stderr, "stopped")
+	fmt.Fprintf(os.Stderr, "telegram: bot up · default identity=%s · provider=%s\n", defaultProfile, launchProvider)
+	return bot.Run(ctx, responder, onCallback, func(e error) { fmt.Fprintln(os.Stderr, "telegram:", e) })
 }
 
 // identityCommand handles /profile and /profiles — switching which identity a
