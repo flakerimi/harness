@@ -445,17 +445,18 @@ func runAgent(args []string) {
 // agentSpec is the resolved configuration for building an Agent — shared by the
 // one-shot run path and the interactive chat path.
 type agentSpec struct {
-	providerSlug string
-	model        string
-	system       string
-	maxTokens    int
-	root         string
-	profileName  string
-	tier         string
-	route        bool
-	classify     bool
-	escalate     bool
-	bash         bool
+	providerSlug  string
+	model         string
+	system        string
+	maxTokens     int
+	root          string
+	profileName   string
+	tier          string
+	route         bool
+	classify      bool
+	escalate      bool
+	bash          bool
+	compactTokens int // 0 disables summarizing compaction (one-shot runs)
 }
 
 // buildAgent wires a provider, connector tools, skills, routing, profile
@@ -475,11 +476,12 @@ func buildAgent(ctx context.Context, spec agentSpec) (*agent.Agent, error) {
 
 	caps := []string{provider.CapTools, provider.CapCaching}
 	opts := agent.Options{
-		Model:     spec.model,
-		System:    spec.system,
-		MaxTokens: spec.maxTokens,
-		Caps:      caps,
-		Env:       &tool.Env{Root: spec.root},
+		Model:         spec.model,
+		System:        spec.system,
+		MaxTokens:     spec.maxTokens,
+		Caps:          caps,
+		Env:           &tool.Env{Root: spec.root},
+		CompactTokens: spec.compactTokens,
 	}
 	toolReg := reg // tools the orchestrator uses
 
@@ -605,6 +607,7 @@ func runChat(args []string) {
 	bash := fs.Bool("bash", false, "enable the bash tool (runs shell commands — trusted skills only)")
 	sessionID := fs.String("session", "default", "conversation id (scoped to the profile)")
 	reset := fs.Bool("new", false, "start this session fresh, discarding prior history")
+	compact := fs.Int("compact", 120000, "summarize older turns once the chat's estimated tokens exceed this (0 disables)")
 	_ = fs.Parse(args)
 
 	profileName := *profileFlag
@@ -629,17 +632,18 @@ func runChat(args []string) {
 	defer stop()
 
 	ag, err := buildAgent(ctx, agentSpec{
-		providerSlug: *providerSlug,
-		model:        *model,
-		system:       "You are a helpful assistant.",
-		maxTokens:    *maxTokens,
-		root:         *root,
-		profileName:  profileName,
-		tier:         *tierFlag,
-		route:        *route,
-		classify:     false, // chat holds a steady tier across the conversation
-		escalate:     *escalate,
-		bash:         *bash,
+		providerSlug:  *providerSlug,
+		model:         *model,
+		system:        "You are a helpful assistant.",
+		maxTokens:     *maxTokens,
+		root:          *root,
+		profileName:   profileName,
+		tier:          *tierFlag,
+		route:         *route,
+		classify:      false, // chat holds a steady tier across the conversation
+		escalate:      *escalate,
+		bash:          *bash,
+		compactTokens: *compact,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

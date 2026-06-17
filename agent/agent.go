@@ -37,6 +37,13 @@ type Options struct {
 	Context    ContextStrategy // what to send each turn; defaults to KeepAll
 	Permission PermissionGate  // optional gate run before each tool call
 
+	// Compaction: when CompactTokens > 0 and the assembled history's estimated
+	// size exceeds it, the oldest complete turns are summarized by a fast-tier
+	// call into one synthetic exchange so long chats stay within the context
+	// window. The persisted history is untouched — only the prompt is compacted.
+	CompactTokens int
+	KeepTurns     int // recent user-turns kept verbatim when compacting; default 4
+
 	// Model routing. When Model is empty and Router is set, the loop resolves a
 	// model per turn from the call's tier. Model (if set) overrides routing.
 	Router   router.Router // (provider, tier) → model
@@ -56,6 +63,12 @@ type Agent struct {
 	prov  provider.Provider
 	tools *tool.Registry
 	opts  Options
+
+	// compaction summary cache: the summary text and the number of leading
+	// history messages it covers, so a long chat re-summarizes only when the
+	// summarized prefix actually grows.
+	sumText  string
+	sumCount int
 }
 
 // New constructs an Agent.
@@ -181,7 +194,7 @@ func (a *Agent) streamOne(ctx context.Context, msgs []provider.Message, model st
 	req := provider.Request{
 		Model:     model,
 		System:    a.opts.System,
-		Messages:  a.strategy().Assemble(msgs),
+		Messages:  a.assemble(ctx, msgs),
 		Tools:     a.providerTools(),
 		MaxTokens: a.opts.MaxTokens,
 		CapFlags:  a.opts.Caps,
