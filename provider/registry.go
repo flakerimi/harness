@@ -35,6 +35,12 @@ func Build(slug string) (Provider, error) {
 			return nil, fmt.Errorf("provider %q: OPENAI_API_KEY not set", slug)
 		}
 		return NewOpenAI("openai", envOr("OPENAI_BASE_URL", "https://api.openai.com/v1"), key), nil
+	case "deepseek":
+		key := os.Getenv("DEEPSEEK_API_KEY")
+		if key == "" {
+			return nil, fmt.Errorf("provider %q: DEEPSEEK_API_KEY not set", slug)
+		}
+		return NewOpenAI("deepseek", envOr("DEEPSEEK_BASE_URL", "https://api.deepseek.com"), key), nil
 	case "ollama":
 		return NewOpenAI("ollama", envOr("OLLAMA_BASE_URL", "http://localhost:11434/v1"), ""), nil
 	case "lmstudio", "lm-studio":
@@ -51,6 +57,8 @@ func DefaultModel(slug string) string {
 		return "claude-opus-4-8"
 	case "openai", "chatgpt":
 		return "gpt-4o"
+	case "deepseek":
+		return "deepseek-chat"
 	case "ollama":
 		return "llama3.1"
 	case "lmstudio", "lm-studio":

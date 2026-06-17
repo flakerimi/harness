@@ -20,6 +20,7 @@ import (
 	"github.com/flakerimi/harness/connector"
 	"github.com/flakerimi/harness/connector/mcp"
 	"github.com/flakerimi/harness/provider"
+	"github.com/flakerimi/harness/router"
 	"github.com/flakerimi/harness/tool"
 )
 
@@ -141,11 +142,15 @@ func runLogin(args []string) {
 
 func runAgent(args []string) {
 	fs := flag.NewFlagSet("harness", flag.ExitOnError)
-	providerSlug := fs.String("provider", "mock", "provider slug: mock | anthropic|claude | openai | ollama | lmstudio")
-	model := fs.String("model", "", "model id (defaults per provider)")
+	providerSlug := fs.String("provider", "mock", "provider slug: mock | anthropic|claude | openai | deepseek | ollama | lmstudio")
+	model := fs.String("model", "", "explicit model id — overrides automatic routing")
 	system := fs.String("system", "You are a helpful assistant.", "system prompt")
 	maxTokens := fs.Int("max-tokens", 4096, "max output tokens")
 	root := fs.String("root", ".", "workspace root for filesystem tools")
+	tierFlag := fs.String("tier", "reasoning", "base routing tier: fast | balanced | reasoning")
+	route := fs.Bool("route", true, "automatic model routing (ignored when -model is set)")
+	classify := fs.Bool("classify", true, "classify task difficulty to pick the base tier")
+	escalate := fs.Bool("escalate", true, "escalate a tier when a turn produces nothing usable")
 	_ = fs.Parse(args)
 
 	prompt := strings.TrimSpace(strings.Join(fs.Args(), " "))
@@ -165,11 +170,6 @@ func runAgent(args []string) {
 		os.Exit(1)
 	}
 
-	modelID := *model
-	if modelID == "" {
-		modelID = provider.DefaultModel(*providerSlug)
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
@@ -179,19 +179,43 @@ func runAgent(args []string) {
 		os.Exit(1)
 	}
 
-	ag := agent.New(prov, reg, agent.Options{
-		Model:     modelID,
+	opts := agent.Options{
+		Model:     *model,
 		System:    *system,
 		MaxTokens: *maxTokens,
 		Caps:      []string{provider.CapTools, provider.CapCaching},
 		Env:       &tool.Env{Root: *root},
-	})
+	}
+	if *model == "" && *route {
+		rt, rerr := router.LoadTable(modelsConfigPath())
+		if rerr != nil {
+			fmt.Fprintln(os.Stderr, "warning: models config:", rerr)
+			rt = router.DefaultTable()
+		}
+		opts.Router = rt
+		opts.BaseTier = router.ParseTier(*tierFlag, router.TierReasoning)
+		opts.Classify = *classify
+		opts.Escalate = *escalate
+		fmt.Fprintf(os.Stderr, "› provider=%s routing=on (classify=%v escalate=%v)\n", prov.Name(), *classify, *escalate)
+	} else {
+		shown := *model
+		if shown == "" {
+			shown = provider.DefaultModel(*providerSlug)
+		}
+		fmt.Fprintf(os.Stderr, "› provider=%s model=%s\n", prov.Name(), shown)
+	}
 
-	fmt.Fprintf(os.Stderr, "› provider=%s model=%s\n", prov.Name(), modelID)
-	if err := ag.Run(ctx, prompt, &cliHandler{}); err != nil {
+	if err := agent.New(prov, reg, opts).Run(ctx, prompt, &cliHandler{}); err != nil {
 		fmt.Fprintln(os.Stderr, "\nerror:", err)
 		os.Exit(1)
 	}
+}
+
+func modelsConfigPath() string {
+	if v := os.Getenv("HARNESS_MODELS_FILE"); v != "" {
+		return v
+	}
+	return "models.json"
 }
 
 // cliHandler renders the agent's stream to the terminal: assistant text on
@@ -199,6 +223,10 @@ func runAgent(args []string) {
 type cliHandler struct{}
 
 func (cliHandler) OnText(delta string) { fmt.Print(delta) }
+
+func (cliHandler) OnRoute(tier, model string) {
+	fmt.Fprintf(os.Stderr, "  ↳ route: %s → %s\n", tier, model)
+}
 
 func (cliHandler) OnToolStart(name, id string) {
 	fmt.Fprintf(os.Stderr, "\n  ⚙ %s …", name)

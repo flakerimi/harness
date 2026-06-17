@@ -65,6 +65,7 @@ type recHandler struct {
 	toolStarts  int
 	toolResults int
 	stop        string
+	routes      []string // "tier:model" per turn
 }
 
 func (r *recHandler) OnText(d string)                      { r.text.WriteString(d) }
@@ -72,6 +73,7 @@ func (r *recHandler) OnToolStart(_, _ string)              { r.toolStarts++ }
 func (r *recHandler) OnToolResult(_ string, _ tool.Result) { r.toolResults++ }
 func (r *recHandler) OnUsage(_ provider.Usage)             {}
 func (r *recHandler) OnStop(reason string)                 { r.stop = reason }
+func (r *recHandler) OnRoute(tier, model string)           { r.routes = append(r.routes, tier+":"+model) }
 
 func TestAgentToolLoop(t *testing.T) {
 	et := &echoTool{}

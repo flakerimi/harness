@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/flakerimi/harness/provider"
+	"github.com/flakerimi/harness/router"
 	"github.com/flakerimi/harness/tool"
 )
 
@@ -35,6 +36,19 @@ type Options struct {
 	MaxTurns   int             // safety cap on the call→result loop; default 16
 	Context    ContextStrategy // what to send each turn; defaults to KeepAll
 	Permission PermissionGate  // optional gate run before each tool call
+
+	// Model routing. When Model is empty and Router is set, the loop resolves a
+	// model per turn from the call's tier. Model (if set) overrides routing.
+	Router   router.Router // (provider, tier) → model
+	BaseTier router.Tier   // starting tier; defaults to reasoning
+	Escalate bool          // retry a turn one tier up when it produces nothing usable
+	Classify bool          // pre-classify the task (a fast-tier call) to pick BaseTier
+}
+
+// RouteAware is an optional Handler extension told which tier/model runs each
+// turn — handy for surfacing automatic model switching.
+type RouteAware interface {
+	OnRoute(tier, model string)
 }
 
 // Agent binds a Provider and a tool Registry into a runnable loop.
@@ -57,18 +71,35 @@ func (a *Agent) Run(ctx context.Context, userInput string, h Handler) error {
 		Content: []provider.Block{{Type: provider.BlockText, Text: userInput}},
 	}}
 
+	tier := a.opts.BaseTier
+	if tier == "" {
+		tier = router.TierReasoning
+	}
+	if a.routingOn() && a.opts.Classify {
+		tier = a.classify(ctx, userInput, tier)
+	}
+
 	maxTurns := a.opts.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = 16
 	}
 
 	for range maxTurns {
-		assistant, stop, err := a.streamOne(ctx, msgs, h)
+		model := a.modelFor(tier)
+		a.notifyRoute(h, tier, model)
+
+		assistant, stop, err := a.streamOne(ctx, msgs, model, h)
 		if err != nil {
 			return err
 		}
-		msgs = append(msgs, assistant)
 
+		// Escalate: a turn that produced nothing usable retries one tier up.
+		if a.routingOn() && a.opts.Escalate && tier != router.TierReasoning && fumbled(assistant) {
+			tier = router.Escalate(tier)
+			continue
+		}
+
+		msgs = append(msgs, assistant)
 		if stop != provider.StopToolUse {
 			h.OnStop(stop)
 			return nil
@@ -80,12 +111,62 @@ func (a *Agent) Run(ctx context.Context, userInput string, h Handler) error {
 	return fmt.Errorf("agent: exceeded %d turns", maxTurns)
 }
 
+func (a *Agent) routingOn() bool {
+	return a.opts.Model == "" && a.opts.Router != nil
+}
+
+// modelFor resolves the model for a tier: explicit override wins, then the
+// router, then the provider's default.
+func (a *Agent) modelFor(tier router.Tier) string {
+	if a.opts.Model != "" {
+		return a.opts.Model
+	}
+	if a.opts.Router != nil {
+		if c := a.opts.Router.Resolve(a.prov.Name(), tier); c.Model != "" {
+			return c.Model
+		}
+	}
+	return provider.DefaultModel(a.prov.Name())
+}
+
+// classify asks the fast-tier model to label the task's difficulty, returning
+// fallback on any error or ambiguity (so it never silently under-powers).
+func (a *Agent) classify(ctx context.Context, task string, fallback router.Tier) router.Tier {
+	var sb strings.Builder
+	err := a.prov.Stream(ctx, provider.Request{
+		Model:     a.modelFor(router.TierFast),
+		MaxTokens: 16,
+		System:    "Classify the difficulty of the user's task for model routing. Reply with exactly one word: fast, balanced, or reasoning. Use 'fast' for simple lookups, extraction, or formatting; 'reasoning' for hard multi-step planning, analysis, or coding; 'balanced' otherwise.",
+		Messages:  []provider.Message{{Role: "user", Content: []provider.Block{{Type: provider.BlockText, Text: task}}}},
+	}, func(ev provider.Event) {
+		if ev.Type == provider.EventTextDelta {
+			sb.WriteString(ev.TextDelta)
+		}
+	})
+	if err != nil {
+		return fallback
+	}
+	return router.ParseTier(sb.String(), fallback)
+}
+
+func (a *Agent) notifyRoute(h Handler, tier router.Tier, model string) {
+	if ra, ok := h.(RouteAware); ok {
+		ra.OnRoute(string(tier), model)
+	}
+}
+
+// fumbled reports a turn that produced nothing usable (empty assistant message)
+// — the signal to escalate to a stronger tier.
+func fumbled(m provider.Message) bool {
+	return len(m.Content) == 0
+}
+
 // streamOne runs one model turn, accumulating streamed events into an assistant
 // message. Tool calls are tracked per content-block index so parallel calls
 // from a single turn don't get interleaved into one another.
-func (a *Agent) streamOne(ctx context.Context, msgs []provider.Message, h Handler) (provider.Message, string, error) {
+func (a *Agent) streamOne(ctx context.Context, msgs []provider.Message, model string, h Handler) (provider.Message, string, error) {
 	req := provider.Request{
-		Model:     a.opts.Model,
+		Model:     model,
 		System:    a.opts.System,
 		Messages:  a.strategy().Assemble(msgs),
 		Tools:     a.providerTools(),
