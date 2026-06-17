@@ -15,11 +15,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/flakerimi/harness/agent"
 	"github.com/flakerimi/harness/auth"
+	"github.com/flakerimi/harness/channel/telegram"
 	"github.com/flakerimi/harness/config"
 	"github.com/flakerimi/harness/connector"
 	"github.com/flakerimi/harness/connector/google"
@@ -70,6 +72,9 @@ func main() {
 			return
 		case "serve":
 			runServe(os.Args[2:])
+			return
+		case "channel":
+			runChannel(os.Args[2:])
 			return
 		}
 	}
@@ -947,6 +952,109 @@ func clip(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
+
+// runChannel dispatches chat-channel subcommands (Telegram for now), bridging
+// an inbound chat to the assistant.
+func runChannel(args []string) {
+	sub := ""
+	if len(args) > 0 {
+		sub = args[0]
+		args = args[1:]
+	}
+	switch sub {
+	case "telegram":
+		runTelegram(args)
+	default:
+		fmt.Fprintf(os.Stderr, "unknown channel %q\nusage: harness channel telegram -token <t> [-profile p] [-provider claude]\n", sub)
+		os.Exit(2)
+	}
+}
+
+// runTelegram runs the Telegram bot loop: each inbound message resumes that
+// chat's own session (so the conversation has memory), runs a turn, and replies.
+func runTelegram(args []string) {
+	fs := flag.NewFlagSet("channel telegram", flag.ExitOnError)
+	token := fs.String("token", "", "Telegram bot token (or $TELEGRAM_BOT_TOKEN)")
+	providerSlug := fs.String("provider", "mock", "model provider slug")
+	profileFlag := fs.String("profile", "", "identity profile (default from config)")
+	compact := fs.Int("compact", 120000, "summarize older turns once estimated tokens exceed this (0 disables)")
+	_ = fs.Parse(args)
+
+	tok := *token
+	if tok == "" {
+		tok = os.Getenv("TELEGRAM_BOT_TOKEN")
+	}
+	if tok == "" {
+		fmt.Fprintln(os.Stderr, "a bot token is required: -token <t> or $TELEGRAM_BOT_TOKEN (create one via @BotFather)")
+		os.Exit(2)
+	}
+
+	profileName := *profileFlag
+	if profileName == "" {
+		cfg, _ := config.Load()
+		profileName = cfg.Profile()
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	store := session.NewStore(profile.SessionsDir(profileName))
+	bot := telegram.New(tok)
+
+	responder := func(ctx context.Context, chatID int64, user, text string) string {
+		sessID := "tg-" + strconv.FormatInt(chatID, 10)
+		sess, err := store.Load(sessID)
+		if err != nil {
+			return "sorry — I couldn't load our conversation: " + err.Error()
+		}
+		ag, err := buildAgent(ctx, agentSpec{
+			providerSlug:  *providerSlug,
+			system:        "You are a helpful assistant replying over Telegram. Keep replies concise and chat-friendly.",
+			maxTokens:     4096,
+			root:          ".",
+			profileName:   profileName,
+			tier:          "reasoning",
+			route:         true,
+			classify:      false,
+			escalate:      true,
+			compactTokens: *compact,
+		})
+		if err != nil {
+			return "sorry — I hit a setup error: " + err.Error()
+		}
+		bh := &bufHandler{}
+		history, rerr := ag.Continue(ctx, sess.History, text, bh)
+		sess.History = history
+		if serr := store.Save(sess); serr != nil {
+			fmt.Fprintln(os.Stderr, "warning: save:", serr)
+		}
+		out := strings.TrimSpace(bh.text.String())
+		if rerr != nil && out == "" {
+			return "sorry — something went wrong: " + rerr.Error()
+		}
+		if out == "" {
+			out = "(no reply)"
+		}
+		return out
+	}
+
+	fmt.Fprintf(os.Stderr, "channel telegram · profile=%s · provider=%s — Ctrl-C to stop\n", profileName, *providerSlug)
+	if err := bot.Run(ctx, responder, func(e error) { fmt.Fprintln(os.Stderr, "telegram:", e) }); err != nil && err != context.Canceled {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	fmt.Fprintln(os.Stderr, "stopped")
+}
+
+// bufHandler collects the agent's streamed text into a buffer — for surfaces
+// (channels) that send one complete reply rather than streaming deltas.
+type bufHandler struct{ text strings.Builder }
+
+func (h *bufHandler) OnText(delta string)                  { h.text.WriteString(delta) }
+func (h *bufHandler) OnToolStart(_, _ string)              {}
+func (h *bufHandler) OnToolResult(_ string, _ tool.Result) {}
+func (h *bufHandler) OnUsage(_ provider.Usage)             {}
+func (h *bufHandler) OnStop(_ string)                      {}
 
 // runServe starts the HTTP+SSE server, so the same engine that powers the CLI
 // can back a web UI, app, or chat channel. Each request builds an agent for the
