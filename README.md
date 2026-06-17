@@ -76,9 +76,30 @@ OPENAI_API_KEY=sk-...    go run ./cmd/harness -provider openai "say hi"
 go run ./cmd/harness -provider ollama -model llama3.1 "say hi"   # local, no key
 ```
 
+## Onboarding — personalize for a business
+
+Turn the generic harness into a specific assistant (an ISP's support desk, a
+social-media agency, …) with a short interview — the model drafts a tailored
+persona and writes the identity:
+
+```sh
+harness onboard
+#  Business / org name: Acme ISP
+#  What does it do: regional fiber internet
+#  Your role: support lead
+#  Tone: friendly, clear, no jargon
+#  → drafting persona… ✓ wrote profiles/acme-isp.md (set as default)
+#  Next: harness chat -profile acme-isp · harness connect google -profile acme-isp
+```
+
+It writes a `profiles/<slug>.md` identity and sets it as the default. Add domain
+know-how afterwards with skills (`skills/<name>/SKILL.md`) and specialists
+(`agents/<name>.md`). `-no-ai` uses a built-in template instead of the model.
+
 ## Commands
 
 ```sh
+harness onboard               # guided setup for a business → a tailored identity
 harness [flags] <prompt>      # one-shot run (default)
 harness chat                  # multi-turn conversation, persisted per identity
 harness serve                 # HTTP+SSE server (POST /v1/chat)
