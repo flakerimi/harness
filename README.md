@@ -136,6 +136,34 @@ harness channel telegram -token <BotFather-token> -profile personal -provider cl
 Each Telegram chat resumes its own per-identity session, so the conversation
 has memory across messages.
 
+## Identities (personal vs business)
+
+A profile is *who the assistant is for* — and each identity is fully scoped: its
+own connected accounts, memory, skills, sessions, and tools, isolated from the
+others. So "Flak personally" and "Flak at Basecode" are different identities with
+different email, calendar, and tools.
+
+```sh
+harness profiles                                  # personal, work, basecode, …
+harness connect google -profile basecode          # connect the Basecode email/calendar to that identity
+harness chat -profile basecode                     # talk to the business identity
+harness -profile personal "what's on my calendar"  # uses the personal account
+```
+
+Everything is per-identity, under `<config>/harness/profiles/<name>/`:
+
+| Scoped per identity | Where |
+|---|---|
+| Connected accounts (Google/email) | `auth.json` |
+| Durable memory | `memory/` |
+| Learned skills | `skills/` |
+| Conversations | `sessions/` |
+| Tools (MCP servers) | `mcp.json` (layered on the shared `mcp.json`) |
+
+Add an identity by dropping a `profiles/<name>.md` (persona + tier + delegation).
+Connecting Google needs a Desktop OAuth client once (`google.client_id/secret`
+in config, from console.cloud.google.com).
+
 ## Skills
 
 Skills are folders with a `SKILL.md` (frontmatter `name` + `description`, then
