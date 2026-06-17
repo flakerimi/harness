@@ -204,9 +204,19 @@ func Connectors(allowShell bool, profileName string) *connector.Registry {
 		r.Add(google.New(auth.NewStore(profile.AuthFile(profileName)), id, secret))
 	}
 
+	// Shared MCP servers (mcp.json), then this identity's own servers
+	// (profiles/<name>/mcp.json) layered on top — so a business profile can have
+	// tools a personal one doesn't.
 	cfgs, err := mcp.LoadConfig(MCPConfigPath())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "warning: mcp config:", err)
+	}
+	if profileName != "" {
+		pcfgs, perr := mcp.LoadConfig(profile.MCPFile(profileName))
+		if perr != nil {
+			fmt.Fprintln(os.Stderr, "warning: profile mcp config:", perr)
+		}
+		cfgs = append(cfgs, pcfgs...)
 	}
 	for _, c := range cfgs {
 		r.Add(mcp.New(c))

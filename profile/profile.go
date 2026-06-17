@@ -88,6 +88,13 @@ func SessionsDir(name string) string {
 	return filepath.Join(DataDir(name), "sessions")
 }
 
+// MCPFile is a profile's own MCP servers file — tools available only to this
+// identity (e.g. a company's internal MCP server), layered on top of the shared
+// mcp.json. Lives in the profile's scoped data dir.
+func MCPFile(name string) string {
+	return filepath.Join(DataDir(name), "mcp.json")
+}
+
 // ScheduleDir is the shared directory for scheduled tasks. Scheduling spans
 // identities (each task names its own profile), so it lives at the base, not
 // under a single profile.

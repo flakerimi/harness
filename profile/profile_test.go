@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/flakerimi/harness/router"
@@ -64,6 +65,27 @@ func TestIdentityProfilesRegistered(t *testing.T) {
 	}
 	if p.Persona == "" || p.WorkerPersona == "" {
 		t.Error("orchestrator and worker personas should both be set")
+	}
+}
+
+func TestScopedDirsAreUnderProfile(t *testing.T) {
+	// Each identity's stores live under its own data dir, so accounts/tools are
+	// isolated between identities (personal vs business).
+	base := DataDir("basecode")
+	for name, got := range map[string]string{
+		"auth":     AuthFile("basecode"),
+		"memory":   MemoryDir("basecode"),
+		"skills":   SkillsDir("basecode"),
+		"sessions": SessionsDir("basecode"),
+		"mcp":      MCPFile("basecode"),
+	} {
+		if !strings.HasPrefix(got, base) {
+			t.Errorf("%s dir %q not under profile data dir %q", name, got, base)
+		}
+	}
+	// Different identities never share a data dir.
+	if DataDir("basecode") == DataDir("personal") {
+		t.Error("distinct profiles must have distinct data dirs")
 	}
 }
 
