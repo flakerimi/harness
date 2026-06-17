@@ -990,6 +990,7 @@ func runTelegram(args []string) {
 	providerSlug := fs.String("provider", "mock", "model provider slug")
 	profileFlag := fs.String("profile", "", "identity profile (default from config)")
 	compact := fs.Int("compact", 120000, "summarize older turns once estimated tokens exceed this (0 disables)")
+	allow := fs.String("allow", "", "comma-separated Telegram chat ids allowed to use the bot (or $HARNESS_TELEGRAM_ALLOW); empty = open to anyone")
 	_ = fs.Parse(args)
 
 	tok := *token
@@ -1005,6 +1006,17 @@ func runTelegram(args []string) {
 	if profileName == "" {
 		cfg, _ := config.Load()
 		profileName = cfg.Profile()
+	}
+
+	allowSpec := *allow
+	if allowSpec == "" {
+		allowSpec = os.Getenv("HARNESS_TELEGRAM_ALLOW")
+	}
+	allowed := parseChatIDs(allowSpec)
+	if len(allowed) == 0 {
+		fmt.Fprintln(os.Stderr, "⚠ no -allow set: this bot is OPEN to anyone who finds it (they can spend your model credits)")
+	} else {
+		fmt.Fprintf(os.Stderr, "allowlist: %d chat(s) permitted\n", len(allowed))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -1025,6 +1037,11 @@ func runTelegram(args []string) {
 	}
 
 	responder := func(ctx context.Context, chatID int64, user, text string) string {
+		// Allowlist gate: only permitted chats reach the model.
+		if len(allowed) > 0 && !allowed[chatID] {
+			fmt.Fprintf(os.Stderr, "blocked chat %d (%s): %q\n", chatID, user, clip(text, 60))
+			return "🔒 This is a private assistant."
+		}
 		sessID := "tg-" + strconv.FormatInt(chatID, 10)
 		sess, err := store.Load(sessID)
 		if err != nil {
@@ -1138,6 +1155,22 @@ func telegramCommand(store *session.Store, sess *session.Session, text, defProvi
 	default:
 		return "unknown command /" + cmd + " — try /help", true
 	}
+}
+
+// parseChatIDs parses a comma-separated list of Telegram chat ids into a set.
+// Invalid entries are skipped.
+func parseChatIDs(spec string) map[int64]bool {
+	out := map[int64]bool{}
+	for part := range strings.SplitSeq(spec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if id, err := strconv.ParseInt(part, 10, 64); err == nil {
+			out[id] = true
+		}
+	}
+	return out
 }
 
 func modelSuffix(model string) string {
