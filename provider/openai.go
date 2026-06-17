@@ -37,17 +37,20 @@ func (o *OpenAI) Stream(ctx context.Context, req Request, emit func(Event)) erro
 	}
 
 	url := strings.TrimRight(o.BaseURL, "/") + "/chat/completions"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
-	if o.APIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+o.APIKey)
+	newReq := func() (*http.Request, error) {
+		r, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Accept", "text/event-stream")
+		if o.APIKey != "" {
+			r.Header.Set("Authorization", "Bearer "+o.APIKey)
+		}
+		return r, nil
 	}
 
-	resp, err := o.HTTP.Do(httpReq)
+	resp, err := httpDoRetry(ctx, o.HTTP, newReq)
 	if err != nil {
 		return fmt.Errorf("openai: request: %w", err)
 	}

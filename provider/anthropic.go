@@ -57,26 +57,29 @@ func (a *Anthropic) Stream(ctx context.Context, req Request, emit func(Event)) e
 		// Claude Pro/Max OAuth requires the ?beta=true query param.
 		url += "?beta=true"
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
-	httpReq.Header.Set("anthropic-version", a.Version)
-	if a.Tokens != nil {
-		access, tokErr := a.Tokens.Token(ctx)
-		if tokErr != nil {
-			return fmt.Errorf("anthropic: oauth token: %w", tokErr)
+	newReq := func() (*http.Request, error) {
+		r, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
 		}
-		httpReq.Header.Set("Authorization", "Bearer "+access)
-		httpReq.Header.Set("anthropic-beta", "oauth-2025-04-20")
-		httpReq.Header.Set("User-Agent", "harness/0.1")
-	} else {
-		httpReq.Header.Set("x-api-key", a.APIKey)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Accept", "text/event-stream")
+		r.Header.Set("anthropic-version", a.Version)
+		if a.Tokens != nil {
+			access, tokErr := a.Tokens.Token(ctx)
+			if tokErr != nil {
+				return nil, fmt.Errorf("anthropic: oauth token: %w", tokErr)
+			}
+			r.Header.Set("Authorization", "Bearer "+access)
+			r.Header.Set("anthropic-beta", "oauth-2025-04-20")
+			r.Header.Set("User-Agent", "harness/0.1")
+		} else {
+			r.Header.Set("x-api-key", a.APIKey)
+		}
+		return r, nil
 	}
 
-	resp, err := a.HTTP.Do(httpReq)
+	resp, err := httpDoRetry(ctx, a.HTTP, newReq)
 	if err != nil {
 		return fmt.Errorf("anthropic: request: %w", err)
 	}

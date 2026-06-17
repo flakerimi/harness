@@ -64,6 +64,20 @@ func TestSplitTailNeverOrphansToolResult(t *testing.T) {
 	}
 }
 
+func TestCapToolResult(t *testing.T) {
+	if got := capToolResult("small"); got != "small" {
+		t.Errorf("small result should pass through, got %q", got)
+	}
+	big := strings.Repeat("x", maxToolResultBytes+5000)
+	got := capToolResult(big)
+	if len(got) >= len(big) {
+		t.Errorf("oversized result should shrink: %d >= %d", len(got), len(big))
+	}
+	if !strings.Contains(got, "truncated") {
+		t.Error("truncated result should carry a marker")
+	}
+}
+
 func TestEstimateTokens(t *testing.T) {
 	msgs := []provider.Message{uMsg(strings.Repeat("x", 400))}
 	if got := estimateTokens(msgs); got != 100 {

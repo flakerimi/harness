@@ -156,3 +156,16 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
+
+// maxToolResultBytes caps a single tool result fed back to the model, so a huge
+// file read or web fetch can't blow the context window in one shot.
+const maxToolResultBytes = 100_000
+
+// capToolResult truncates an oversized tool result, keeping the head and noting
+// how much was dropped so the model can refine the request.
+func capToolResult(s string) string {
+	if len(s) <= maxToolResultBytes {
+		return s
+	}
+	return s[:maxToolResultBytes] + fmt.Sprintf("\n\n[... truncated %d bytes — narrow the query or read a smaller range]", len(s)-maxToolResultBytes)
+}

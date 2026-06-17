@@ -271,7 +271,7 @@ func (a *Agent) runTools(ctx context.Context, assistant provider.Message, h Hand
 			Type: provider.BlockToolResult,
 			ToolResult: &provider.ToolResultBlock{
 				ToolUseID: tu.ID,
-				Content:   res.Content,
+				Content:   capToolResult(res.Content),
 				IsError:   res.IsError,
 			},
 		})
