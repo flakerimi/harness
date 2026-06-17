@@ -42,7 +42,7 @@ func main() {
 // search via MCP) are added here as they're built — never hardcoded deeper in.
 func defaultConnectors() *connector.Registry {
 	r := connector.NewRegistry()
-	r.Add(connector.NewNative("builtin", tool.ReadFile{}, tool.WebFetch{}))
+	r.Add(connector.NewNative("builtin", tool.ReadFile{}, tool.WebFetch{}, tool.WebSearch{}))
 
 	// External connectors come from mcp.json — add a server there and it shows
 	// up here with no code change. Nothing vendor-specific is baked in.
