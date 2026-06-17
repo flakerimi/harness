@@ -88,6 +88,13 @@ func SessionsDir(name string) string {
 	return filepath.Join(DataDir(name), "sessions")
 }
 
+// ScheduleDir is the shared directory for scheduled tasks. Scheduling spans
+// identities (each task names its own profile), so it lives at the base, not
+// under a single profile.
+func ScheduleDir() string {
+	return filepath.Join(DataDir(""), "schedule")
+}
+
 // Dirs returns the directories scanned for *.md profile files: a project-local
 // ./profiles, plus $HARNESS_PROFILES_DIR (or <user-config-dir>/harness/profiles).
 func Dirs() []string {
