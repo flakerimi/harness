@@ -85,6 +85,31 @@ func Path() string {
 	return filepath.Join(dir, "harness", "config.json")
 }
 
+// Save writes the config back to its file (creating the dir), preserving every
+// field — so callers can load, tweak one thing, and save without clobbering the
+// rest. Written at 0600 since it holds API keys.
+func Save(c Config) error {
+	path := Path()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0o600)
+}
+
+// SetDefaultProfile loads the config, sets the default identity, and saves.
+func SetDefaultProfile(name string) error {
+	c, err := Load()
+	if err != nil {
+		return err
+	}
+	c.DefaultProfile = name
+	return Save(c)
+}
+
 // Load reads the config file. A missing file yields a zero Config and no error.
 func Load() (Config, error) {
 	var c Config

@@ -120,6 +120,19 @@ func Dirs() []string {
 	return dirs
 }
 
+// UserProfilesDir is the writable directory for profile files (where onboarding
+// writes a new identity): $HARNESS_PROFILES_DIR, else <user-config>/harness/profiles.
+// It is one of the dirs Dirs() loads from, so a profile written there is picked up.
+func UserProfilesDir() string {
+	if d := os.Getenv("HARNESS_PROFILES_DIR"); d != "" {
+		return d
+	}
+	if ucd, err := os.UserConfigDir(); err == nil {
+		return filepath.Join(ucd, "harness", "profiles")
+	}
+	return "profiles"
+}
+
 func loadAll() (map[string]Profile, []error) {
 	m := map[string]Profile{}
 	for k, v := range builtins {

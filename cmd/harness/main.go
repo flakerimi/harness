@@ -63,6 +63,9 @@ func main() {
 		case "channel":
 			runChannel(os.Args[2:])
 			return
+		case "onboard":
+			runOnboard(os.Args[2:])
+			return
 		}
 	}
 	runAgent(os.Args[1:])
