@@ -50,7 +50,8 @@ type Profile struct {
 const DefaultWorkerPersona = `You are a research assistant. Given one focused subtask, use the available web search and fetch tools to find concrete, current, verifiable facts. Return a tight, well-organized summary (5-10 lines). Include the source URL for any non-obvious claim. If you cannot find something, say so explicitly — never invent details, names, numbers, or URLs.`
 
 var builtins = map[string]Profile{
-	meetingPrep.Name: meetingPrep,
+	personalProfile.Name: personalProfile,
+	workProfile.Name:     workProfile,
 }
 
 // Dirs returns the directories scanned for *.md profile files: a project-local

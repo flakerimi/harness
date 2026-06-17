@@ -14,6 +14,19 @@ import (
 type Config struct {
 	Search SearchConfig `json:"search"`
 	Google GoogleConfig `json:"google"`
+
+	// DefaultProfile is the identity profile used when -profile is not passed
+	// (e.g. "personal"). Env HARNESS_PROFILE overrides.
+	DefaultProfile string `json:"default_profile"`
+}
+
+// Profile resolves the default identity profile: HARNESS_PROFILE env, else the
+// config value.
+func (c Config) Profile() string {
+	if v := os.Getenv("HARNESS_PROFILE"); v != "" {
+		return v
+	}
+	return c.DefaultProfile
 }
 
 // SearchConfig configures the web_search backend.

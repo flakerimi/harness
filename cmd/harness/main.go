@@ -313,7 +313,7 @@ func runAgent(args []string) {
 	system := fs.String("system", "You are a helpful assistant.", "system prompt")
 	maxTokens := fs.Int("max-tokens", 4096, "max output tokens")
 	root := fs.String("root", ".", "workspace root for filesystem tools")
-	profileFlag := fs.String("profile", "", "agent profile (e.g. meeting-prep); empty = generic assistant")
+	profileFlag := fs.String("profile", "", "identity profile (e.g. personal, work); default from config/HARNESS_PROFILE")
 	tierFlag := fs.String("tier", "reasoning", "base routing tier: fast | balanced | reasoning")
 	route := fs.Bool("route", true, "automatic model routing (ignored when -model is set)")
 	classify := fs.Bool("classify", true, "classify task difficulty to pick the base tier")
@@ -330,6 +330,13 @@ func runAgent(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: harness [flags] <prompt>   (or pipe the prompt on stdin)")
 		fs.PrintDefaults()
 		os.Exit(2)
+	}
+
+	// Identity profile: flag, else config default (HARNESS_PROFILE / default_profile).
+	profileName := *profileFlag
+	if profileName == "" {
+		cfg, _ := config.Load()
+		profileName = cfg.Profile()
 	}
 
 	prov, err := provider.Build(*providerSlug)
@@ -372,7 +379,7 @@ func runAgent(args []string) {
 
 	// Routing is on when requested, or implied by a profile.
 	var rt *router.Table
-	if (*model == "" && *route) || *profileFlag != "" {
+	if (*model == "" && *route) || profileName != "" {
 		t, rerr := router.LoadTable(modelsConfigPath())
 		if rerr != nil {
 			fmt.Fprintln(os.Stderr, "warning: models config:", rerr)
@@ -385,10 +392,10 @@ func runAgent(args []string) {
 		opts.Escalate = *escalate
 	}
 
-	if *profileFlag != "" {
-		prof, ok := profile.Get(*profileFlag)
+	if profileName != "" {
+		prof, ok := profile.Get(profileName)
 		if !ok {
-			fmt.Fprintf(os.Stderr, "unknown profile %q (available: %s)\n", *profileFlag, strings.Join(profile.Names(), ", "))
+			fmt.Fprintf(os.Stderr, "unknown profile %q (available: %s)\n", profileName, strings.Join(profile.Names(), ", "))
 			os.Exit(2)
 		}
 		opts.System = prof.Persona

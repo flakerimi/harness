@@ -51,10 +51,10 @@ func TestFileProfileNameFromFilename(t *testing.T) {
 	}
 }
 
-func TestMeetingPrepRegistered(t *testing.T) {
-	p, ok := Get("meeting-prep")
+func TestIdentityProfilesRegistered(t *testing.T) {
+	p, ok := Get("personal")
 	if !ok {
-		t.Fatal("meeting-prep profile not registered")
+		t.Fatal("personal profile not registered")
 	}
 	if p.BaseTier != router.TierReasoning {
 		t.Errorf("BaseTier = %q, want reasoning", p.BaseTier)
@@ -67,9 +67,10 @@ func TestMeetingPrepRegistered(t *testing.T) {
 	}
 }
 
-func TestNamesIncludesMeetingPrep(t *testing.T) {
-	if !slices.Contains(Names(), "meeting-prep") {
-		t.Errorf("Names() = %v, want it to include meeting-prep", Names())
+func TestNamesIncludesIdentityProfiles(t *testing.T) {
+	names := Names()
+	if !slices.Contains(names, "personal") || !slices.Contains(names, "work") {
+		t.Errorf("Names() = %v, want personal and work", names)
 	}
 }
 
