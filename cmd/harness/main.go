@@ -21,6 +21,7 @@ import (
 	"github.com/flakerimi/harness/connector"
 	"github.com/flakerimi/harness/connector/google"
 	"github.com/flakerimi/harness/connector/mcp"
+	"github.com/flakerimi/harness/memory"
 	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/router"
@@ -49,9 +50,40 @@ func main() {
 		case "skills":
 			runSkills(os.Args[2:])
 			return
+		case "memory":
+			runMemory(os.Args[2:])
+			return
 		}
 	}
 	runAgent(os.Args[1:])
+}
+
+// runMemory lists the active identity's durable memories.
+func runMemory(args []string) {
+	fs := flag.NewFlagSet("memory", flag.ExitOnError)
+	profileFlag := fs.String("profile", "", "identity profile (default from config)")
+	_ = fs.Parse(args)
+	name := *profileFlag
+	if name == "" {
+		name = activeProfile()
+	}
+	store := memory.NewStore(profile.MemoryDir(name))
+	mems, err := store.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	label := name
+	if label == "" {
+		label = "(default)"
+	}
+	fmt.Printf("memory for %q  [%s]\n", label, store.Dir())
+	for _, m := range mems {
+		fmt.Printf("- %s: %s\n", m.Name, m.Content)
+	}
+	if len(mems) == 0 {
+		fmt.Println("(nothing remembered yet)")
+	}
 }
 
 // runSkills lists the loaded Agent Skills (SKILL.md folders) — the procedural
@@ -462,6 +494,23 @@ func runAgent(args []string) {
 			opts.System += "\n\n"
 		}
 		opts.System += skillDiscovery
+	}
+
+	// Memory: inject the identity's durable facts + the remember tool. Only for
+	// an identity profile — a generic stateless run keeps no memory.
+	if profileName != "" {
+		memStore := memory.NewStore(profile.MemoryDir(profileName))
+		mems, merr := memStore.Load()
+		if merr != nil {
+			fmt.Fprintln(os.Stderr, "warning: memory:", merr)
+		}
+		if mc := memory.Context(mems); mc != "" {
+			if opts.System != "" {
+				opts.System += "\n\n"
+			}
+			opts.System += mc
+		}
+		toolReg.Register(memory.NewRememberTool(memStore))
 	}
 
 	if err := agent.New(prov, toolReg, opts).Run(ctx, prompt, &cliHandler{}); err != nil {

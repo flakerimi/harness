@@ -73,6 +73,11 @@ func AuthFile(name string) string {
 	return filepath.Join(DataDir(name), "auth.json")
 }
 
+// MemoryDir is the memory directory for a profile (its durable facts).
+func MemoryDir(name string) string {
+	return filepath.Join(DataDir(name), "memory")
+}
+
 // Dirs returns the directories scanned for *.md profile files: a project-local
 // ./profiles, plus $HARNESS_PROFILES_DIR (or <user-config-dir>/harness/profiles).
 func Dirs() []string {
