@@ -12,7 +12,45 @@ import (
 	"github.com/flakerimi/harness/memory"
 	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/skill"
+	"github.com/flakerimi/harness/subagent"
 )
+
+// runAgents lists the available specialist sub-agents (agents/*.md) the
+// orchestrator can dispatch to, including the active identity's own.
+func runAgents(args []string) {
+	fs := flag.NewFlagSet("agents", flag.ExitOnError)
+	profileFlag := fs.String("profile", "", "identity profile (default from config)")
+	_ = fs.Parse(args)
+	name := *profileFlag
+	if name == "" {
+		name = activeProfile()
+	}
+	var dirs []string
+	if name != "" {
+		dirs = append(dirs, profile.AgentsDir(name))
+	}
+	specs, errs := subagent.Load(dirs...)
+	for _, s := range specs {
+		tools := "all tools"
+		if len(s.Tools) > 0 {
+			tools = strings.Join(s.Tools, ", ")
+		}
+		tier := s.Tier
+		if tier == "" {
+			tier = "fast"
+		}
+		fmt.Printf("%-16s %s\n", s.Name, s.Description)
+		fmt.Printf("    tier=%s tools=[%s]  [%s]\n", tier, tools, s.Dir)
+	}
+	if len(specs) == 0 {
+		fmt.Println("(no specialists — add one with agents/<name>.md)")
+	}
+	allDirs := append(dirs, subagent.Dirs()...)
+	fmt.Fprintf(os.Stderr, "\nagent dirs: %s\n", strings.Join(allDirs, ", "))
+	for _, e := range errs {
+		fmt.Fprintln(os.Stderr, "warning:", e)
+	}
+}
 
 // runMemory lists the active identity's durable memories.
 func runMemory(args []string) {

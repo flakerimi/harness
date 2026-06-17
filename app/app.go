@@ -23,6 +23,7 @@ import (
 	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/router"
 	"github.com/flakerimi/harness/skill"
+	"github.com/flakerimi/harness/subagent"
 	"github.com/flakerimi/harness/tool"
 )
 
@@ -155,6 +156,50 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 			opts.System += "\n\n"
 		}
 		opts.System += skillDiscovery
+	}
+
+	// Pluggable specialists: load agents/<name>.md (shared + this identity's own)
+	// and give the orchestrator a dispatch tool plus a roster in its prompt. Each
+	// specialist runs at its own tier over its own tool subset (empty = all).
+	var agentDirs []string
+	if spec.Profile != "" {
+		agentDirs = append(agentDirs, profile.AgentsDir(spec.Profile))
+	}
+	specs, aerrs := subagent.Load(agentDirs...)
+	for _, e := range aerrs {
+		fmt.Fprintln(os.Stderr, "warning: subagent:", e)
+	}
+	if len(specs) > 0 {
+		workers := make(map[string]agent.WorkerConfig, len(specs))
+		for _, s := range specs {
+			wtools := reg // reg has the connector tools + load_skill, no dispatch (no recursion)
+			if len(s.Tools) > 0 {
+				sub := tool.NewRegistry()
+				for _, n := range s.Tools {
+					if t, ok := reg.Get(n); ok {
+						sub.Register(t)
+					}
+				}
+				wtools = sub
+			}
+			sys := s.Persona
+			if skillDiscovery != "" {
+				sys += "\n\n" + skillDiscovery
+			}
+			workers[s.Name] = agent.WorkerConfig{
+				Description: s.Description,
+				Tier:        router.ParseTier(s.Tier, router.TierFast),
+				System:      sys,
+				Tools:       wtools,
+			}
+		}
+		toolReg.Register(agent.NewDispatch(prov, rt, spec.MaxTokens, caps, workers))
+		if d := subagent.DiscoveryText(specs); d != "" {
+			if opts.System != "" {
+				opts.System += "\n\n"
+			}
+			opts.System += d
+		}
 	}
 
 	// Memory: inject the identity's durable facts + the remember tool. Only for

@@ -88,6 +88,12 @@ func SessionsDir(name string) string {
 	return filepath.Join(DataDir(name), "sessions")
 }
 
+// AgentsDir is the per-profile specialist sub-agents directory (agents/*.md
+// definitions available only to this identity).
+func AgentsDir(name string) string {
+	return filepath.Join(DataDir(name), "agents")
+}
+
 // MCPFile is a profile's own MCP servers file — tools available only to this
 // identity (e.g. a company's internal MCP server), layered on top of the shared
 // mcp.json. Lives in the profile's scoped data dir.

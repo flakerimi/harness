@@ -42,6 +42,9 @@ func main() {
 		case "skills":
 			runSkills(os.Args[2:])
 			return
+		case "agents":
+			runAgents(os.Args[2:])
+			return
 		case "memory":
 			runMemory(os.Args[2:])
 			return
