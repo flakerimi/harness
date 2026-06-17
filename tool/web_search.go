@@ -13,10 +13,14 @@ import (
 	"time"
 )
 
-// WebSearch returns web results for a query via DuckDuckGo's HTML endpoint —
-// keyless and public. Override the engine with HARNESS_SEARCH_URL; any endpoint
-// that accepts POST q=<query> and renders DuckDuckGo-style result anchors works
-// (that's how Construct pointed it at Bing). Ported from Construct's web_search.
+// WebSearch returns web results for a query. Backends, in priority order:
+//
+//   - SearXNG JSON  — set HARNESS_SEARXNG_URL (e.g. https://search.construct.space).
+//     Reliable, keyless, self-hosted; the recommended backend.
+//   - DuckDuckGo HTML — the keyless default (fragile under load). Override the
+//     engine with HARNESS_SEARCH_URL (any DDG-style endpoint, e.g. Bing).
+//
+// The harness stays a single binary either way — it only makes an HTTP call.
 type WebSearch struct {
 	HTTP *http.Client
 }
@@ -55,6 +59,12 @@ func (w WebSearch) Run(ctx context.Context, input json.RawMessage, _ *Env) (Resu
 	if client == nil {
 		client = &http.Client{Timeout: 20 * time.Second}
 	}
+
+	// Prefer a self-hosted SearXNG instance when configured.
+	if base := os.Getenv("HARNESS_SEARXNG_URL"); base != "" {
+		return w.searxng(ctx, client, base, in.Query, in.Limit)
+	}
+
 	endpoint := os.Getenv("HARNESS_SEARCH_URL")
 	if endpoint == "" {
 		endpoint = "https://html.duckduckgo.com/html/"
@@ -87,6 +97,56 @@ func (w WebSearch) Run(ctx context.Context, input json.RawMessage, _ *Env) (Resu
 		fmt.Fprintf(&b, "%d. %s\n   %s\n", i+1, r.Title, r.URL)
 		if r.Snippet != "" {
 			fmt.Fprintf(&b, "   %s\n", r.Snippet)
+		}
+	}
+	return Result{Content: strings.TrimRight(b.String(), "\n")}, nil
+}
+
+// searxng queries a self-hosted SearXNG instance via its JSON API. The instance
+// must have JSON output enabled (search.formats includes "json") and its bot
+// limiter relaxed for programmatic access. Protect it with HTTP basic auth and
+// embed credentials in HARNESS_SEARXNG_URL (https://user:pass@host) if needed.
+func (w WebSearch) searxng(ctx context.Context, client *http.Client, base, query string, limit int) (Result, error) {
+	endpoint := strings.TrimRight(base, "/") + "/search?q=" + url.QueryEscape(query) + "&format=json"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return Result{Content: err.Error(), IsError: true}, nil
+	}
+	req.Header.Set("User-Agent", "harness/0.1 (+web_search)")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return Result{Content: "searxng: " + err.Error(), IsError: true}, nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return Result{Content: fmt.Sprintf("searxng HTTP %d (is JSON format enabled and the limiter relaxed?)", resp.StatusCode), IsError: true}, nil
+	}
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var out struct {
+		Results []struct {
+			Title   string `json:"title"`
+			URL     string `json:"url"`
+			Content string `json:"content"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return Result{Content: "searxng parse: " + err.Error(), IsError: true}, nil
+	}
+	if len(out.Results) == 0 {
+		return Result{Content: "no results"}, nil
+	}
+
+	var b strings.Builder
+	for i, r := range out.Results {
+		if i >= limit {
+			break
+		}
+		fmt.Fprintf(&b, "%d. %s\n   %s\n", i+1, strings.TrimSpace(r.Title), r.URL)
+		if c := strings.TrimSpace(r.Content); c != "" {
+			fmt.Fprintf(&b, "   %s\n", c)
 		}
 	}
 	return Result{Content: strings.TrimRight(b.String(), "\n")}, nil

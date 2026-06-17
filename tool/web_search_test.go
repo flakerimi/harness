@@ -1,6 +1,38 @@
 package tool
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestSearxngBackend(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("format") != "json" {
+			http.Error(w, "json format not requested", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[
+			{"title":"Jane Doe — CEO of Acme","url":"https://example.com/jane","content":"Jane Doe leads Acme."},
+			{"title":"Acme Corp","url":"https://acme.example","content":"About Acme."}
+		]}`))
+	}))
+	defer srv.Close()
+
+	res, err := WebSearch{}.searxng(context.Background(), http.DefaultClient, srv.URL, "jane doe acme", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Content)
+	}
+	if !strings.Contains(res.Content, "Jane Doe — CEO of Acme") || !strings.Contains(res.Content, "https://example.com/jane") {
+		t.Errorf("missing parsed result: %q", res.Content)
+	}
+}
 
 func TestParseDDG(t *testing.T) {
 	html := `
