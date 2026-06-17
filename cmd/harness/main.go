@@ -1111,7 +1111,7 @@ func telegramCommand(store *session.Store, sess *session.Session, text, defProvi
 
 	switch cmd {
 	case "start", "help":
-		return "I'm your assistant. Just talk to me normally. Commands:\n" +
+		return "I'm Morpheus, your assistant. Just talk to me normally. Commands:\n" +
 			"/model <provider> [model] — switch model (e.g. /model kimi)\n" +
 			"/models — list providers + show current\n" +
 			"/status — current model and conversation length\n" +
