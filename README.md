@@ -140,12 +140,35 @@ harness schedule daemon         # or keep a process checking every minute
 
 Specs: `every 30m` · `every 1d` · `daily 08:00` · `weekly mon 09:00`.
 
-### Serve — HTTP + SSE
+### Serve — HTTP + SSE API (local or a shared VPS)
+
+A token-gated JSON/SSE API so web, desktop, and mobile clients all talk to one
+brain — run it locally, or deploy it to a VPS (e.g. behind HTTPS on CapRover)
+that a whole org connects to for shared identities, memory, and sessions.
 
 ```sh
-harness serve -provider claude -addr :8080
-curl -N -X POST localhost:8080/v1/chat -d '{"profile":"personal","message":"hi"}'
+harness serve -provider claude -addr :8080      # auto-generates + prints an API token
+harness serve -open                             # NO auth (localhost dev only)
+
+TOKEN=…   # from startup, or -token / $HARNESS_API_TOKEN
+curl -s  -H "Authorization: Bearer $TOKEN" localhost:8080/v1/profiles
+curl -s  -H "Authorization: Bearer $TOKEN" localhost:8080/v1/models
+curl -sN -H "Authorization: Bearer $TOKEN" -X POST localhost:8080/v1/chat \
+     -d '{"profile":"basecode","session":"web1","message":"hi","provider":"kimi"}'
 ```
+
+| Endpoint | What |
+|---|---|
+| `POST /v1/chat` | stream a turn (SSE); body `{profile, session, message, provider?, model?}` |
+| `GET /v1/profiles` | the identities |
+| `GET /v1/models` | providers + their models |
+| `GET /v1/sessions?profile=` | a profile's conversations |
+| `GET /v1/sessions/{id}?profile=` | one conversation's history |
+| `GET /healthz` | open liveness check |
+
+Auth: every `/v1` route needs the token (Bearer header, or `?token=` for
+EventSource). CORS is permitted (token-gated), so browser/desktop clients on
+other origins work. TLS is terminated by the reverse proxy in front.
 
 ### Telegram — assistant on your phone
 
