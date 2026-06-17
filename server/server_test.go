@@ -28,11 +28,97 @@ func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	dir := t.TempDir()
 	return &Server{
-		Factory: func(_ context.Context, _ string) (*agent.Agent, error) {
+		Factory: func(_ context.Context, _, _, _ string) (*agent.Agent, error) {
 			return agent.New(textProvider{}, tool.NewRegistry(), agent.Options{}), nil
 		},
-		Sessions:       func(_ string) *session.Store { return session.NewStore(dir) },
+		Sessions: func(_ string) *session.Store { return session.NewStore(dir) },
+		Profiles: func() []ProfileInfo {
+			return []ProfileInfo{{Name: "personal", Description: "you"}, {Name: "basecode", Description: "work"}}
+		},
 		DefaultProfile: "personal",
+	}
+}
+
+func TestTokenAuth(t *testing.T) {
+	srv := newTestServer(t)
+	srv.Token = "secret"
+
+	// No token → 401.
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/profiles", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("missing token should be 401, got %d", rec.Code)
+	}
+
+	// Bearer header → ok.
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/profiles", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "basecode") {
+		t.Errorf("bearer auth = %d %q", rec.Code, rec.Body.String())
+	}
+
+	// ?token= query (for EventSource) → ok.
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/profiles?token=secret", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("query-token auth = %d", rec.Code)
+	}
+
+	// Wrong token → 401; healthz stays open.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/v1/profiles", nil)
+	req.Header.Set("Authorization", "Bearer nope")
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("wrong token should be 401, got %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("healthz must stay open, got %d", rec.Code)
+	}
+}
+
+func TestCORSPreflight(t *testing.T) {
+	srv := newTestServer(t)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodOptions, "/v1/chat", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("OPTIONS preflight = %d, want 204", rec.Code)
+	}
+	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
+		t.Error("CORS origin header missing")
+	}
+}
+
+func TestModelsAndProfilesEndpoints(t *testing.T) {
+	srv := newTestServer(t)
+	for _, path := range []string{"/v1/profiles", "/v1/models"} {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s = %d", path, rec.Code)
+		}
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+	if !strings.Contains(rec.Body.String(), "fireworks") {
+		t.Errorf("/v1/models should list providers: %s", rec.Body.String())
+	}
+}
+
+func TestSessionHistoryEndpoint(t *testing.T) {
+	srv := newTestServer(t)
+	// Seed a session via chat.
+	body := strings.NewReader(`{"profile":"personal","session":"h1","message":"hi"}`)
+	srv.Handler().ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/chat", body))
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/sessions/h1?profile=personal", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"messages"`) {
+		t.Errorf("session history = %d %q", rec.Code, rec.Body.String())
 	}
 }
 
