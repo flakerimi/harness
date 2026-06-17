@@ -184,6 +184,17 @@ Auth: every `/v1` route needs the token (Bearer header, or `?token=` for
 EventSource). CORS is permitted (token-gated), so browser/desktop clients on
 other origins work. TLS is terminated by the reverse proxy in front.
 
+### Web client
+
+A decoupled Vue 3 SPA lives in [`web/`](web/) — connect with the API URL +
+token, pick an identity and model, and chat with streaming replies. It's a pure
+client over the same `/v1` API (local or a remote VPS); desktop/mobile can be
+thin wrappers over it.
+
+```sh
+cd web && npm install && npm run dev    # http://localhost:5173
+```
+
 ### Telegram — assistant on your phone
 
 ```sh
