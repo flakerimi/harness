@@ -141,17 +141,21 @@ func maskURLSecret(raw string) string {
 // defaultConnectors wires the integrations available to this harness instance.
 // Native built-ins are always present; external connectors (calendar, mail,
 // search via MCP) are added here as they're built — never hardcoded deeper in.
-func defaultConnectors() *connector.Registry {
+func defaultConnectors(allowShell bool) *connector.Registry {
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "warning: config:", err)
 	}
-	r := connector.NewRegistry()
-	r.Add(connector.NewNative("builtin",
+	tools := []tool.Tool{
 		tool.ReadFile{},
 		tool.WebFetch{},
 		tool.WebSearch{SearxngURL: cfg.Search.SearxngURL, SearxngToken: cfg.Search.SearxngToken},
-	))
+	}
+	if allowShell {
+		tools = append(tools, tool.Bash{})
+	}
+	r := connector.NewRegistry()
+	r.Add(connector.NewNative("builtin", tools...))
 
 	// External connectors come from mcp.json — add a server there and it shows
 	// up here with no code change. Nothing vendor-specific is baked in.
@@ -181,7 +185,7 @@ func runConnectors(args []string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	for _, c := range defaultConnectors().Connectors() {
+	for _, c := range defaultConnectors(false).Connectors() {
 		if cl, ok := c.(interface{ Close() error }); ok {
 			defer cl.Close()
 		}
@@ -260,6 +264,7 @@ func runAgent(args []string) {
 	route := fs.Bool("route", true, "automatic model routing (ignored when -model is set)")
 	classify := fs.Bool("classify", true, "classify task difficulty to pick the base tier")
 	escalate := fs.Bool("escalate", true, "escalate a tier when a turn produces nothing usable")
+	bash := fs.Bool("bash", false, "enable the bash tool (runs shell commands — trusted skills only)")
 	_ = fs.Parse(args)
 
 	prompt := strings.TrimSpace(strings.Join(fs.Args(), " "))
@@ -282,7 +287,7 @@ func runAgent(args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	reg, err := defaultConnectors().Tools(ctx)
+	reg, err := defaultConnectors(*bash).Tools(ctx)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
