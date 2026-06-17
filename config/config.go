@@ -13,12 +13,32 @@ import (
 // Config is the harness settings file (JSON).
 type Config struct {
 	Search SearchConfig `json:"search"`
+	Google GoogleConfig `json:"google"`
 }
 
 // SearchConfig configures the web_search backend.
 type SearchConfig struct {
 	SearxngURL   string `json:"searxng_url"`   // may embed basic-auth creds: https://user:pass@host
 	SearxngToken string `json:"searxng_token"` // optional bearer token
+}
+
+// GoogleConfig holds the Google OAuth client (a "Desktop app" client from
+// console.cloud.google.com). Env GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET override.
+type GoogleConfig struct {
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+}
+
+// GoogleClient resolves the Google OAuth client id/secret, env overriding file.
+func (c Config) GoogleClient() (id, secret string) {
+	id, secret = c.Google.ClientID, c.Google.ClientSecret
+	if v := os.Getenv("GOOGLE_CLIENT_ID"); v != "" {
+		id = v
+	}
+	if v := os.Getenv("GOOGLE_CLIENT_SECRET"); v != "" {
+		secret = v
+	}
+	return id, secret
 }
 
 // Path returns the config file location: $HARNESS_CONFIG, else

@@ -41,12 +41,21 @@ func Build(slug string) (Provider, error) {
 			return nil, fmt.Errorf("provider %q: DEEPSEEK_API_KEY not set", slug)
 		}
 		return NewOpenAI("deepseek", envOr("DEEPSEEK_BASE_URL", "https://api.deepseek.com"), key), nil
+	case "gemini", "google":
+		key := os.Getenv("GEMINI_API_KEY")
+		if key == "" {
+			key = os.Getenv("GOOGLE_API_KEY")
+		}
+		if key == "" {
+			return nil, fmt.Errorf("provider %q: GEMINI_API_KEY (or GOOGLE_API_KEY) not set", slug)
+		}
+		return NewOpenAI("gemini", envOr("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai"), key), nil
 	case "ollama":
 		return NewOpenAI("ollama", envOr("OLLAMA_BASE_URL", "http://localhost:11434/v1"), ""), nil
 	case "lmstudio", "lm-studio":
 		return NewOpenAI("lmstudio", envOr("LMSTUDIO_BASE_URL", "http://localhost:1234/v1"), ""), nil
 	default:
-		return nil, fmt.Errorf("unknown provider %q (known: mock, anthropic|claude, openai, ollama, lmstudio)", slug)
+		return nil, fmt.Errorf("unknown provider %q (known: mock, anthropic|claude, openai, deepseek, gemini, ollama, lmstudio)", slug)
 	}
 }
 
@@ -59,6 +68,8 @@ func DefaultModel(slug string) string {
 		return "gpt-4o"
 	case "deepseek":
 		return "deepseek-chat"
+	case "gemini", "google":
+		return "gemini-2.0-flash"
 	case "ollama":
 		return "llama3.1"
 	case "lmstudio", "lm-studio":

@@ -19,6 +19,7 @@ import (
 	"github.com/flakerimi/harness/auth"
 	"github.com/flakerimi/harness/config"
 	"github.com/flakerimi/harness/connector"
+	"github.com/flakerimi/harness/connector/google"
 	"github.com/flakerimi/harness/connector/mcp"
 	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/provider"
@@ -32,6 +33,9 @@ func main() {
 		switch os.Args[1] {
 		case "login":
 			runLogin(os.Args[2:])
+			return
+		case "connect":
+			runConnect(os.Args[2:])
 			return
 		case "connectors":
 			runConnectors(os.Args[2:])
@@ -157,6 +161,12 @@ func defaultConnectors(allowShell bool) *connector.Registry {
 	r := connector.NewRegistry()
 	r.Add(connector.NewNative("builtin", tools...))
 
+	// Google connector when an OAuth client is configured (connect via
+	// `harness connect google`).
+	if id, secret := cfg.GoogleClient(); id != "" && secret != "" {
+		r.Add(google.New(auth.NewStore(authFileDefault()), id, secret))
+	}
+
 	// External connectors come from mcp.json — add a server there and it shows
 	// up here with no code change. Nothing vendor-specific is baked in.
 	cfgs, err := mcp.LoadConfig(mcpConfigPath())
@@ -221,40 +231,84 @@ func runLogin(args []string) {
 	urlOnly := fs.Bool("url-only", false, "print the authorize URL and exit (no browser, no wait)")
 	_ = fs.Parse(args)
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	store := auth.NewStore(*authFile)
+	onURL := func(u string) { fmt.Fprintln(os.Stderr, "If your browser didn't open, visit:\n  "+u) }
+
 	switch strings.ToLower(*prov) {
 	case "claude", "anthropic":
-	default:
-		fmt.Fprintf(os.Stderr, "login: only 'claude' is supported (got %q)\n", *prov)
-		os.Exit(2)
-	}
-
-	if *urlOnly {
-		u, _, err := auth.AnthropicAuthURL()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
+		if *urlOnly {
+			u, _, err := auth.AnthropicAuthURL()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+			fmt.Println(u)
+			return
+		}
+		fmt.Fprintln(os.Stderr, "Opening browser for Claude login…")
+		if _, err := auth.AnthropicLogin(ctx, store, "claude", onURL); err != nil {
+			fmt.Fprintln(os.Stderr, "login failed:", err)
 			os.Exit(1)
 		}
-		fmt.Println(u)
-		return
+		fmt.Fprintf(os.Stderr, "✓ logged in — credentials saved to %s\n", *authFile)
+
+	case "google", "gemini":
+		fmt.Fprintln(os.Stderr, "Gemini uses an API key — set GEMINI_API_KEY (or GOOGLE_API_KEY) and run with -provider gemini.")
+		fmt.Fprintln(os.Stderr, "For Google Calendar/Mail integration, use: harness connect google")
+
+	default:
+		fmt.Fprintf(os.Stderr, "login: unknown provider %q (claude | gemini)\n", *prov)
+		os.Exit(2)
 	}
+}
+
+// runConnect handles `harness connect <service>` — the friendly entry point for
+// integrations (Google, …), distinct from `login` (the model provider).
+func runConnect(args []string) {
+	fs := flag.NewFlagSet("connect", flag.ExitOnError)
+	authFile := fs.String("auth-file", authFileDefault(), "credential file to write")
+	_ = fs.Parse(args)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-
 	store := auth.NewStore(*authFile)
-	fmt.Fprintln(os.Stderr, "Opening browser for Claude login…")
-	if _, err := auth.AnthropicLogin(ctx, store, "claude", func(u string) {
-		fmt.Fprintln(os.Stderr, "If your browser didn't open, visit:\n  "+u)
-	}); err != nil {
-		fmt.Fprintln(os.Stderr, "login failed:", err)
+	onURL := func(u string) { fmt.Fprintln(os.Stderr, "If your browser didn't open, visit:\n  "+u) }
+
+	switch strings.ToLower(strings.TrimSpace(fs.Arg(0))) {
+	case "google":
+		connectGoogle(ctx, store, *authFile, onURL)
+	case "":
+		fmt.Fprintln(os.Stderr, "usage: harness connect <service>   (services: google)")
+		os.Exit(2)
+	default:
+		fmt.Fprintf(os.Stderr, "connect: unknown service %q (services: google)\n", fs.Arg(0))
+		os.Exit(2)
+	}
+}
+
+func connectGoogle(ctx context.Context, store *auth.Store, authFile string, onURL func(string)) {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "warning: config:", err)
+	}
+	id, secret := cfg.GoogleClient()
+	if id == "" || secret == "" {
+		fmt.Fprintln(os.Stderr, "Google needs a Desktop OAuth client — set google.client_id / client_secret in config (or GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET). Create one at console.cloud.google.com (OAuth client type: Desktop app).")
+		os.Exit(2)
+	}
+	fmt.Fprintln(os.Stderr, "Opening browser to connect Google…")
+	if _, err := auth.GoogleLogin(ctx, store, id, secret, nil, onURL); err != nil {
+		fmt.Fprintln(os.Stderr, "google connect failed:", err)
 		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stderr, "✓ logged in — credentials saved to %s\n", *authFile)
+	fmt.Fprintf(os.Stderr, "✓ Google connected — credentials saved to %s\n", authFile)
 }
 
 func runAgent(args []string) {
 	fs := flag.NewFlagSet("harness", flag.ExitOnError)
-	providerSlug := fs.String("provider", "mock", "provider slug: mock | anthropic|claude | openai | deepseek | ollama | lmstudio")
+	providerSlug := fs.String("provider", "mock", "provider slug: mock | anthropic|claude | openai | deepseek | gemini | ollama | lmstudio")
 	model := fs.String("model", "", "explicit model id — overrides automatic routing")
 	system := fs.String("system", "You are a helpful assistant.", "system prompt")
 	maxTokens := fs.Int("max-tokens", 4096, "max output tokens")
