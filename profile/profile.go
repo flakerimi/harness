@@ -83,6 +83,11 @@ func SkillsDir(name string) string {
 	return filepath.Join(DataDir(name), "skills")
 }
 
+// SessionsDir is the per-profile conversations directory (persisted chats).
+func SessionsDir(name string) string {
+	return filepath.Join(DataDir(name), "sessions")
+}
+
 // Dirs returns the directories scanned for *.md profile files: a project-local
 // ./profiles, plus $HARNESS_PROFILES_DIR (or <user-config-dir>/harness/profiles).
 func Dirs() []string {

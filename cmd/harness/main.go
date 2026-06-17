@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/router"
+	"github.com/flakerimi/harness/session"
 	"github.com/flakerimi/harness/skill"
 	"github.com/flakerimi/harness/tool"
 )
@@ -52,6 +54,12 @@ func main() {
 			return
 		case "memory":
 			runMemory(os.Args[2:])
+			return
+		case "chat":
+			runChat(os.Args[2:])
+			return
+		case "sessions":
+			runSessions(os.Args[2:])
 			return
 		}
 	}
@@ -407,28 +415,71 @@ func runAgent(args []string) {
 		profileName = cfg.Profile()
 	}
 
-	prov, err := provider.Build(*providerSlug)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	ag, err := buildAgent(ctx, agentSpec{
+		providerSlug: *providerSlug,
+		model:        *model,
+		system:       *system,
+		maxTokens:    *maxTokens,
+		root:         *root,
+		profileName:  profileName,
+		tier:         *tierFlag,
+		route:        *route,
+		classify:     *classify,
+		escalate:     *escalate,
+		bash:         *bash,
+	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
-	reg, err := defaultConnectors(*bash, profileName).Tools(ctx)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+	if err := ag.Run(ctx, prompt, &cliHandler{}); err != nil {
+		fmt.Fprintln(os.Stderr, "\nerror:", err)
 		os.Exit(1)
+	}
+}
+
+// agentSpec is the resolved configuration for building an Agent — shared by the
+// one-shot run path and the interactive chat path.
+type agentSpec struct {
+	providerSlug string
+	model        string
+	system       string
+	maxTokens    int
+	root         string
+	profileName  string
+	tier         string
+	route        bool
+	classify     bool
+	escalate     bool
+	bash         bool
+}
+
+// buildAgent wires a provider, connector tools, skills, routing, profile
+// persona, delegation, and memory into a ready-to-run Agent. It is the single
+// place that assembles the full assistant, so `run` and `chat` behave
+// identically.
+func buildAgent(ctx context.Context, spec agentSpec) (*agent.Agent, error) {
+	prov, err := provider.Build(spec.providerSlug)
+	if err != nil {
+		return nil, err
+	}
+
+	reg, err := defaultConnectors(spec.bash, spec.profileName).Tools(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	caps := []string{provider.CapTools, provider.CapCaching}
 	opts := agent.Options{
-		Model:     *model,
-		System:    *system,
-		MaxTokens: *maxTokens,
+		Model:     spec.model,
+		System:    spec.system,
+		MaxTokens: spec.maxTokens,
 		Caps:      caps,
-		Env:       &tool.Env{Root: *root},
+		Env:       &tool.Env{Root: spec.root},
 	}
 	toolReg := reg // tools the orchestrator uses
 
@@ -437,8 +488,8 @@ func runAgent(args []string) {
 	// text that advertises skills in the system prompt. For an identity profile,
 	// its own learned-skills dir is scanned first (and wins on name conflicts).
 	var skillDirs []string
-	if profileName != "" {
-		skillDirs = append(skillDirs, profile.SkillsDir(profileName))
+	if spec.profileName != "" {
+		skillDirs = append(skillDirs, profile.SkillsDir(spec.profileName))
 	}
 	skills, skErrs := skill.Load(skillDirs...)
 	for _, e := range skErrs {
@@ -452,7 +503,7 @@ func runAgent(args []string) {
 
 	// Routing is on when requested, or implied by a profile.
 	var rt *router.Table
-	if (*model == "" && *route) || profileName != "" {
+	if (spec.model == "" && spec.route) || spec.profileName != "" {
 		t, rerr := router.LoadTable(modelsConfigPath())
 		if rerr != nil {
 			fmt.Fprintln(os.Stderr, "warning: models config:", rerr)
@@ -460,16 +511,15 @@ func runAgent(args []string) {
 		}
 		rt = t
 		opts.Router = rt
-		opts.BaseTier = router.ParseTier(*tierFlag, router.TierReasoning)
-		opts.Classify = *classify
-		opts.Escalate = *escalate
+		opts.BaseTier = router.ParseTier(spec.tier, router.TierReasoning)
+		opts.Classify = spec.classify
+		opts.Escalate = spec.escalate
 	}
 
-	if profileName != "" {
-		prof, ok := profile.Get(profileName)
+	if spec.profileName != "" {
+		prof, ok := profile.Get(spec.profileName)
 		if !ok {
-			fmt.Fprintf(os.Stderr, "unknown profile %q (available: %s)\n", profileName, strings.Join(profile.Names(), ", "))
-			os.Exit(2)
+			return nil, fmt.Errorf("unknown profile %q (available: %s)", spec.profileName, strings.Join(profile.Names(), ", "))
 		}
 		opts.System = prof.Persona
 		opts.BaseTier = prof.BaseTier
@@ -489,18 +539,18 @@ func runAgent(args []string) {
 				Router:    rt,
 				Tier:      prof.WorkerTier,
 				System:    workerSystem,
-				MaxTokens: *maxTokens,
+				MaxTokens: spec.maxTokens,
 				Caps:      caps,
 			})
 			toolReg = orch
 		}
 		fmt.Fprintf(os.Stderr, "› provider=%s profile=%s (base=%s, delegate=%v)\n", prov.Name(), prof.Name, prof.BaseTier, prof.Delegate)
 	} else if opts.Router != nil {
-		fmt.Fprintf(os.Stderr, "› provider=%s routing=on (classify=%v escalate=%v)\n", prov.Name(), *classify, *escalate)
+		fmt.Fprintf(os.Stderr, "› provider=%s routing=on (classify=%v escalate=%v)\n", prov.Name(), spec.classify, spec.escalate)
 	} else {
-		shown := *model
+		shown := spec.model
 		if shown == "" {
-			shown = provider.DefaultModel(*providerSlug)
+			shown = provider.DefaultModel(spec.providerSlug)
 		}
 		fmt.Fprintf(os.Stderr, "› provider=%s model=%s\n", prov.Name(), shown)
 	}
@@ -516,8 +566,8 @@ func runAgent(args []string) {
 
 	// Memory: inject the identity's durable facts + the remember tool. Only for
 	// an identity profile — a generic stateless run keeps no memory.
-	if profileName != "" {
-		memStore := memory.NewStore(profile.MemoryDir(profileName))
+	if spec.profileName != "" {
+		memStore := memory.NewStore(profile.MemoryDir(spec.profileName))
 		mems, merr := memStore.Load()
 		if merr != nil {
 			fmt.Fprintln(os.Stderr, "warning: memory:", merr)
@@ -532,12 +582,139 @@ func runAgent(args []string) {
 
 		// Self-improvement: let the identity write new skills it works out into
 		// its own skills dir, so the procedure is reusable by name next time.
-		toolReg.Register(skill.NewLearnTool(profile.SkillsDir(profileName)))
+		toolReg.Register(skill.NewLearnTool(profile.SkillsDir(spec.profileName)))
 	}
 
-	if err := agent.New(prov, toolReg, opts).Run(ctx, prompt, &cliHandler{}); err != nil {
-		fmt.Fprintln(os.Stderr, "\nerror:", err)
+	return agent.New(prov, toolReg, opts), nil
+}
+
+// runChat is the interactive multi-turn conversation. It loads (or starts) a
+// persisted session for the active identity, then loops: read a line, run a turn
+// with the full prior history, stream the reply, and save. The conversation
+// survives across invocations — the assistant remembers what was said.
+func runChat(args []string) {
+	fs := flag.NewFlagSet("chat", flag.ExitOnError)
+	providerSlug := fs.String("provider", "mock", "provider slug: mock | anthropic|claude | openai | deepseek | gemini | ollama | lmstudio")
+	model := fs.String("model", "", "explicit model id — overrides automatic routing")
+	maxTokens := fs.Int("max-tokens", 4096, "max output tokens")
+	root := fs.String("root", ".", "workspace root for filesystem tools")
+	profileFlag := fs.String("profile", "", "identity profile (e.g. personal, work); default from config")
+	tierFlag := fs.String("tier", "reasoning", "base routing tier: fast | balanced | reasoning")
+	route := fs.Bool("route", true, "automatic model routing (ignored when -model is set)")
+	escalate := fs.Bool("escalate", true, "escalate a tier when a turn produces nothing usable")
+	bash := fs.Bool("bash", false, "enable the bash tool (runs shell commands — trusted skills only)")
+	sessionID := fs.String("session", "default", "conversation id (scoped to the profile)")
+	reset := fs.Bool("new", false, "start this session fresh, discarding prior history")
+	_ = fs.Parse(args)
+
+	profileName := *profileFlag
+	if profileName == "" {
+		cfg, _ := config.Load()
+		profileName = cfg.Profile()
+	}
+
+	store := session.NewStore(profile.SessionsDir(profileName))
+	if *reset {
+		if err := store.Reset(*sessionID); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: reset:", err)
+		}
+	}
+	sess, err := store.Load(*sessionID)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	ag, err := buildAgent(ctx, agentSpec{
+		providerSlug: *providerSlug,
+		model:        *model,
+		system:       "You are a helpful assistant.",
+		maxTokens:    *maxTokens,
+		root:         *root,
+		profileName:  profileName,
+		tier:         *tierFlag,
+		route:        *route,
+		classify:     false, // chat holds a steady tier across the conversation
+		escalate:     *escalate,
+		bash:         *bash,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+
+	label := profileName
+	if label == "" {
+		label = "(default)"
+	}
+	fmt.Fprintf(os.Stderr, "chat: %s · session %q · %d prior turns — /exit to quit, /reset to clear\n", label, sess.ID, sess.Turns())
+
+	scan := bufio.NewScanner(os.Stdin)
+	scan.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	h := &cliHandler{}
+	for {
+		fmt.Print("\nyou › ")
+		if !scan.Scan() {
+			fmt.Println()
+			break // EOF (Ctrl-D)
+		}
+		line := strings.TrimSpace(scan.Text())
+		switch line {
+		case "":
+			continue
+		case "/exit", "/quit":
+			return
+		case "/reset":
+			_ = store.Reset(sess.ID)
+			sess = &session.Session{ID: sess.ID}
+			fmt.Fprintln(os.Stderr, "(conversation reset)")
+			continue
+		}
+
+		fmt.Print("\nasst › ")
+		history, rerr := ag.Continue(ctx, sess.History, line, h)
+		fmt.Println()
+		sess.History = history // keep partial history even on error
+		if serr := store.Save(sess); serr != nil {
+			fmt.Fprintln(os.Stderr, "warning: save:", serr)
+		}
+		if rerr != nil {
+			if ctx.Err() != nil {
+				return // interrupted
+			}
+			fmt.Fprintln(os.Stderr, "error:", rerr)
+		}
+	}
+}
+
+// runSessions lists the active identity's stored conversations.
+func runSessions(args []string) {
+	fs := flag.NewFlagSet("sessions", flag.ExitOnError)
+	profileFlag := fs.String("profile", "", "identity profile (default from config)")
+	_ = fs.Parse(args)
+	name := *profileFlag
+	if name == "" {
+		name = activeProfile()
+	}
+	store := session.NewStore(profile.SessionsDir(name))
+	metas, err := store.List()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	label := name
+	if label == "" {
+		label = "(default)"
+	}
+	fmt.Printf("sessions for %q  [%s]\n", label, store.Dir())
+	for _, m := range metas {
+		fmt.Printf("- %-16s %d turns\n", m.ID, m.Turns)
+	}
+	if len(metas) == 0 {
+		fmt.Println("(no conversations yet — start one with `harness chat`)")
 	}
 }
 

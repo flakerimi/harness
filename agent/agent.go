@@ -64,12 +64,25 @@ func New(prov provider.Provider, tools *tool.Registry, opts Options) *Agent {
 }
 
 // Run drives the conversation from a single user message until the model stops
-// for a non-tool reason (or the turn cap is hit).
+// for a non-tool reason (or the turn cap is hit). It is a stateless one-shot —
+// for a persisted multi-turn conversation use Continue.
 func (a *Agent) Run(ctx context.Context, userInput string, h Handler) error {
-	msgs := []provider.Message{{
+	_, err := a.Continue(ctx, nil, userInput, h)
+	return err
+}
+
+// Continue resumes a conversation: it appends the user's message to the prior
+// history, drives the loop until the model stops, and returns the full updated
+// history (user + assistant + tool messages). A session store can persist the
+// result and pass it back next turn for true multi-turn memory. On error it
+// returns the history accumulated so far so nothing is silently lost.
+func (a *Agent) Continue(ctx context.Context, history []provider.Message, userInput string, h Handler) ([]provider.Message, error) {
+	msgs := make([]provider.Message, 0, len(history)+2)
+	msgs = append(msgs, history...)
+	msgs = append(msgs, provider.Message{
 		Role:    "user",
 		Content: []provider.Block{{Type: provider.BlockText, Text: userInput}},
-	}}
+	})
 
 	tier := a.opts.BaseTier
 	if tier == "" {
@@ -90,7 +103,7 @@ func (a *Agent) Run(ctx context.Context, userInput string, h Handler) error {
 
 		assistant, stop, err := a.streamOne(ctx, msgs, model, h)
 		if err != nil {
-			return err
+			return msgs, err
 		}
 
 		// Escalate: a turn that produced nothing usable retries one tier up.
@@ -102,13 +115,13 @@ func (a *Agent) Run(ctx context.Context, userInput string, h Handler) error {
 		msgs = append(msgs, assistant)
 		if stop != provider.StopToolUse {
 			h.OnStop(stop)
-			return nil
+			return msgs, nil
 		}
 
 		results := a.runTools(ctx, assistant, h)
 		msgs = append(msgs, provider.Message{Role: "tool", Content: results})
 	}
-	return fmt.Errorf("agent: exceeded %d turns", maxTurns)
+	return msgs, fmt.Errorf("agent: exceeded %d turns", maxTurns)
 }
 
 func (a *Agent) routingOn() bool {
