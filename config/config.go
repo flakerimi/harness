@@ -18,6 +18,24 @@ type Config struct {
 	// DefaultProfile is the identity profile used when -profile is not passed
 	// (e.g. "personal"). Env HARNESS_PROFILE overrides.
 	DefaultProfile string `json:"default_profile"`
+
+	// Providers stores model-provider credentials/endpoints by slug, so API keys
+	// don't have to live in the environment. Env vars still override at build time.
+	Providers map[string]ProviderConfig `json:"providers,omitempty"`
+}
+
+// ProviderConfig holds a model provider's stored credential and optional
+// endpoint/model overrides (for OpenAI-compatible providers).
+type ProviderConfig struct {
+	APIKey  string `json:"api_key,omitempty"`
+	BaseURL string `json:"base_url,omitempty"`
+	Model   string `json:"model,omitempty"`
+}
+
+// ProviderConf returns the stored config for a provider slug (zero value if
+// unset).
+func (c Config) ProviderConf(slug string) ProviderConfig {
+	return c.Providers[slug]
 }
 
 // Profile resolves the default identity profile: HARNESS_PROFILE env, else the

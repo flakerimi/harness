@@ -479,7 +479,11 @@ type agentSpec struct {
 // place that assembles the full assistant, so `run` and `chat` behave
 // identically.
 func buildAgent(ctx context.Context, spec agentSpec) (*agent.Agent, error) {
-	prov, err := provider.Build(spec.providerSlug)
+	// Resolve provider credentials/endpoint from config (env still overrides),
+	// so stored keys work without exporting env vars.
+	cfg, _ := config.Load()
+	pc := cfg.ProviderConf(spec.providerSlug)
+	prov, err := provider.BuildWith(spec.providerSlug, provider.BuildOptions{APIKey: pc.APIKey, BaseURL: pc.BaseURL})
 	if err != nil {
 		return nil, err
 	}
@@ -489,9 +493,16 @@ func buildAgent(ctx context.Context, spec agentSpec) (*agent.Agent, error) {
 		return nil, err
 	}
 
+	// Model precedence: explicit -model, else a config-pinned model for this
+	// provider (needed for OpenAI-compatible providers with no built-in default).
+	model := spec.model
+	if model == "" {
+		model = pc.Model
+	}
+
 	caps := []string{provider.CapTools, provider.CapCaching}
 	opts := agent.Options{
-		Model:         spec.model,
+		Model:         model,
 		System:        spec.system,
 		MaxTokens:     spec.maxTokens,
 		Caps:          caps,
