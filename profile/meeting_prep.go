@@ -3,10 +3,11 @@ package profile
 import "github.com/flakerimi/harness/router"
 
 var meetingPrep = Profile{
-	Name:       "meeting-prep",
-	BaseTier:   router.TierReasoning,
-	Delegate:   true,
-	WorkerTier: router.TierFast,
+	Name:        "meeting-prep",
+	Description: "Research a meeting's attendees + companies and write a prep brief.",
+	BaseTier:    router.TierReasoning,
+	Delegate:    true,
+	WorkerTier:  router.TierFast,
 	Persona: `You are an executive assistant preparing your principal for a meeting.
 
 Given a meeting — found via the calendar tools if available, otherwise described by the user — produce a concise, skimmable prep brief.

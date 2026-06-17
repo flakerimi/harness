@@ -38,9 +38,30 @@ func main() {
 		case "config":
 			runConfig(os.Args[2:])
 			return
+		case "profiles":
+			runProfiles(os.Args[2:])
+			return
 		}
 	}
 	runAgent(os.Args[1:])
+}
+
+// runProfiles lists the available agent profiles (built-in + file-based) — the
+// set of "cases" the harness can run. Add a case by dropping a .md file in a
+// profiles directory.
+func runProfiles(_ []string) {
+	profs, errs := profile.List()
+	for _, p := range profs {
+		fmt.Printf("%-16s %s\n", p.Name, p.Description)
+		fmt.Printf("    tier=%s delegate=%v  [%s]\n", p.BaseTier, p.Delegate, p.Source)
+	}
+	if len(profs) == 0 {
+		fmt.Println("(no profiles)")
+	}
+	fmt.Fprintf(os.Stderr, "\nprofile dirs: %s\n", strings.Join(profile.Dirs(), ", "))
+	for _, e := range errs {
+		fmt.Fprintln(os.Stderr, "warning:", e)
+	}
 }
 
 // runConfig prints the config file location and the resolved search settings
