@@ -19,6 +19,7 @@ import (
 	"github.com/flakerimi/harness/auth"
 	"github.com/flakerimi/harness/connector"
 	"github.com/flakerimi/harness/connector/mcp"
+	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/router"
 	"github.com/flakerimi/harness/tool"
@@ -147,6 +148,7 @@ func runAgent(args []string) {
 	system := fs.String("system", "You are a helpful assistant.", "system prompt")
 	maxTokens := fs.Int("max-tokens", 4096, "max output tokens")
 	root := fs.String("root", ".", "workspace root for filesystem tools")
+	profileFlag := fs.String("profile", "", "agent profile (e.g. meeting-prep); empty = generic assistant")
 	tierFlag := fs.String("tier", "reasoning", "base routing tier: fast | balanced | reasoning")
 	route := fs.Bool("route", true, "automatic model routing (ignored when -model is set)")
 	classify := fs.Bool("classify", true, "classify task difficulty to pick the base tier")
@@ -179,23 +181,58 @@ func runAgent(args []string) {
 		os.Exit(1)
 	}
 
+	caps := []string{provider.CapTools, provider.CapCaching}
 	opts := agent.Options{
 		Model:     *model,
 		System:    *system,
 		MaxTokens: *maxTokens,
-		Caps:      []string{provider.CapTools, provider.CapCaching},
+		Caps:      caps,
 		Env:       &tool.Env{Root: *root},
 	}
-	if *model == "" && *route {
-		rt, rerr := router.LoadTable(modelsConfigPath())
+	toolReg := reg // tools the orchestrator uses
+
+	// Routing is on when requested, or implied by a profile.
+	var rt *router.Table
+	if (*model == "" && *route) || *profileFlag != "" {
+		t, rerr := router.LoadTable(modelsConfigPath())
 		if rerr != nil {
 			fmt.Fprintln(os.Stderr, "warning: models config:", rerr)
-			rt = router.DefaultTable()
+			t = router.DefaultTable()
 		}
+		rt = t
 		opts.Router = rt
 		opts.BaseTier = router.ParseTier(*tierFlag, router.TierReasoning)
 		opts.Classify = *classify
 		opts.Escalate = *escalate
+	}
+
+	if *profileFlag != "" {
+		prof, ok := profile.Get(*profileFlag)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "unknown profile %q (available: %s)\n", *profileFlag, strings.Join(profile.Names(), ", "))
+			os.Exit(2)
+		}
+		opts.System = prof.Persona
+		opts.BaseTier = prof.BaseTier
+		opts.Classify = false // the profile sets the orchestrator's tier
+		if prof.Delegate {
+			orch := tool.NewRegistry()
+			for _, t := range reg.All() {
+				orch.Register(t)
+			}
+			orch.Register(agent.Delegate{
+				Provider:  prov,
+				Tools:     reg, // worker uses the connector tools (no delegate → no recursion)
+				Router:    rt,
+				Tier:      prof.WorkerTier,
+				System:    prof.WorkerPersona,
+				MaxTokens: *maxTokens,
+				Caps:      caps,
+			})
+			toolReg = orch
+		}
+		fmt.Fprintf(os.Stderr, "› provider=%s profile=%s (base=%s, delegate=%v)\n", prov.Name(), prof.Name, prof.BaseTier, prof.Delegate)
+	} else if opts.Router != nil {
 		fmt.Fprintf(os.Stderr, "› provider=%s routing=on (classify=%v escalate=%v)\n", prov.Name(), *classify, *escalate)
 	} else {
 		shown := *model
@@ -205,7 +242,7 @@ func runAgent(args []string) {
 		fmt.Fprintf(os.Stderr, "› provider=%s model=%s\n", prov.Name(), shown)
 	}
 
-	if err := agent.New(prov, reg, opts).Run(ctx, prompt, &cliHandler{}); err != nil {
+	if err := agent.New(prov, toolReg, opts).Run(ctx, prompt, &cliHandler{}); err != nil {
 		fmt.Fprintln(os.Stderr, "\nerror:", err)
 		os.Exit(1)
 	}

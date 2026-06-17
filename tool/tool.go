@@ -67,6 +67,15 @@ func (r *Registry) Specs() []Spec {
 	return specs
 }
 
+// All returns the registered tools in registration order.
+func (r *Registry) All() []Tool {
+	out := make([]Tool, 0, len(r.order))
+	for _, name := range r.order {
+		out = append(out, r.tools[name])
+	}
+	return out
+}
+
 // Env is the mediated view of the world handed to a tool. Milestone 0 exposes
 // only a filesystem root; exec, network, and a permission callback land here
 // next, so tools never widen their own blast radius.

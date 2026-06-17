@@ -29,3 +29,27 @@ func TestNativeStatusConnected(t *testing.T) {
 		t.Errorf("native connector should report Connected, got %+v", st)
 	}
 }
+
+// fakeConn is a non-native connector for testing namespacing.
+type fakeConn struct{ tools []tool.Tool }
+
+func (fakeConn) Name() string                                 { return "fake" }
+func (fakeConn) Status(context.Context) Status                { return Status{Connected: true} }
+func (f fakeConn) Tools(context.Context) ([]tool.Tool, error) { return f.tools, nil }
+
+func TestExternalConnectorToolsAreNamespaced(t *testing.T) {
+	r := NewRegistry()
+	r.Add(NewNative("builtin", tool.ReadFile{}))         // native → plain name
+	r.Add(fakeConn{tools: []tool.Tool{tool.ReadFile{}}}) // external → prefixed
+
+	reg, err := r.Tools(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reg.Get("read_file"); !ok {
+		t.Error("native read_file should keep its plain name")
+	}
+	if _, ok := reg.Get("fake__read_file"); !ok {
+		t.Error("external connector's read_file should be namespaced to fake__read_file")
+	}
+}

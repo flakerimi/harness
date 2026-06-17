@@ -11,6 +11,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"regexp"
 
 	"github.com/flakerimi/harness/tool"
 )
@@ -52,9 +53,40 @@ func (r *Registry) Tools(ctx context.Context) (*tool.Registry, error) {
 		if err != nil {
 			return nil, fmt.Errorf("connector %q: %w", c.Name(), err)
 		}
+		// Namespace external connectors (e.g. an MCP server's read_file becomes
+		// filesystem__read_file) so they can't shadow each other or the
+		// built-ins. Native built-in tools keep their plain names.
+		prefix := ""
+		if _, isNative := c.(*Native); !isNative {
+			prefix = sanitizeName(c.Name()) + "__"
+		}
 		for _, t := range ts {
-			reg.Register(t)
+			if prefix == "" {
+				reg.Register(t)
+			} else {
+				reg.Register(namespaced{prefix: prefix, Tool: t})
+			}
 		}
 	}
 	return reg, nil
+}
+
+// namespaced wraps a tool to expose a prefixed name; Run delegates unchanged.
+type namespaced struct {
+	prefix string
+	tool.Tool
+}
+
+func (n namespaced) Spec() tool.Spec {
+	s := n.Tool.Spec()
+	s.Name = n.prefix + s.Name
+	return s
+}
+
+var reInvalidName = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+
+// sanitizeName makes a connector name safe for a tool-name prefix (tool names
+// must match [a-zA-Z0-9_-]).
+func sanitizeName(s string) string {
+	return reInvalidName.ReplaceAllString(s, "_")
 }
