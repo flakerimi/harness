@@ -145,6 +145,37 @@ func Slugs() []string {
 	return []string{"mock", "claude", "openai", "deepseek", "kimi", "fireworks", "mimo", "gemini", "ollama", "lmstudio"}
 }
 
+// ModelInfo is one selectable model for a provider: a friendly label plus the
+// id the API expects.
+type ModelInfo struct {
+	Label string
+	ID    string
+}
+
+// Models returns a curated list of selectable models for a provider, for menus
+// and pickers. An empty list means the provider is used with its default model.
+func Models(slug string) []ModelInfo {
+	switch strings.ToLower(strings.TrimSpace(slug)) {
+	case "deepseek":
+		return []ModelInfo{{"v4-pro", "deepseek-v4-pro"}, {"v4-flash", "deepseek-v4-flash"}}
+	case "fireworks":
+		return []ModelInfo{
+			{"kimi-k2p6", "accounts/fireworks/models/kimi-k2p6"},
+			{"deepseek-v4-pro (1M)", "accounts/fireworks/models/deepseek-v4-pro"},
+			{"kimi-k2p5", "accounts/fireworks/models/kimi-k2p5"},
+			{"glm-5p1", "accounts/fireworks/models/glm-5p1"},
+			{"gpt-oss-120b", "accounts/fireworks/models/gpt-oss-120b"},
+		}
+	case "mimo":
+		return []ModelInfo{
+			{"v2.5-pro", "mimo-v2.5-pro"}, {"v2.5", "mimo-v2.5"},
+			{"v2-pro", "mimo-v2-pro"}, {"v2-flash", "mimo-v2-flash"}, {"v2-omni", "mimo-v2-omni"},
+		}
+	default:
+		return nil
+	}
+}
+
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
