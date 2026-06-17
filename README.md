@@ -82,6 +82,7 @@ go run ./cmd/harness -provider ollama -model llama3.1 "say hi"   # local, no key
 harness [flags] <prompt>      # one-shot run (default)
 harness chat                  # multi-turn conversation, persisted per identity
 harness serve                 # HTTP+SSE server (POST /v1/chat)
+harness channel telegram ...  # reach the assistant from Telegram
 harness schedule add ...      # proactive scheduled tasks
 harness profiles              # list identities
 harness skills                # list skills (incl. the identity's learned ones)
@@ -125,6 +126,16 @@ harness serve -provider claude -addr :8080
 curl -N -X POST localhost:8080/v1/chat -d '{"profile":"personal","message":"hi"}'
 ```
 
+### Telegram — assistant on your phone
+
+```sh
+harness channel telegram -token <BotFather-token> -profile personal -provider claude
+# or: TELEGRAM_BOT_TOKEN=... harness channel telegram -provider claude
+```
+
+Each Telegram chat resumes its own per-identity session, so the conversation
+has memory across messages.
+
 ## Skills
 
 Skills are folders with a `SKILL.md` (frontmatter `name` + `description`, then
@@ -137,9 +148,9 @@ skills dir, reusable by name next time.
 ## Status
 
 The engine plus all six pillars: identities, memory, skills (+ self-learning),
-sessions, compaction, scheduling, and an HTTP/SSE server. Provider adapters for
-mock, Anthropic (API key + OAuth), and OpenAI-compatible (OpenAI, DeepSeek,
-Gemini, Ollama, LM Studio). Connectors: native tools, MCP, and Google Calendar.
+sessions, compaction, scheduling, an HTTP/SSE server, and a Telegram channel.
+Provider adapters for mock, Anthropic (API key + OAuth), and OpenAI-compatible
+(OpenAI, DeepSeek, Gemini, Ollama, LM Studio). Connectors: native tools, MCP,
+and Google Calendar + Gmail (read).
 
-Next: more connectors (Gmail), chat channels (Telegram/Slack) over the server,
-and pulling skills from a registry.
+Next: more channels (Slack), Gmail send/draft, and pulling skills from a registry.
