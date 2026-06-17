@@ -164,14 +164,39 @@ Add an identity by dropping a `profiles/<name>.md` (persona + tier + delegation)
 Connecting Google needs a Desktop OAuth client once (`google.client_id/secret`
 in config, from console.cloud.google.com).
 
-## Skills
+## Extending it — everything is a dropped file
 
-Skills are folders with a `SKILL.md` (frontmatter `name` + `description`, then
-instructions) in the agentskills.io / Anthropic open format. They reach the model
-by progressive disclosure: names + descriptions go in the system prompt, and the
-model calls `load_skill` to pull full instructions only when a task matches. An
-identity can also `learn_skill` — saving a workflow it worked out into its own
-skills dir, reusable by name next time.
+The harness has four pluggable layers, all file-based and per-identity scopable:
+
+| Layer | What | File |
+|---|---|---|
+| **Identities** | who the assistant is | `profiles/<name>.md` |
+| **Skills** | *procedures* the agent follows itself | `skills/<name>/SKILL.md` |
+| **Specialists** | *sub-agents* it dispatches tasks to | `agents/<name>.md` |
+| **Tools** | raw capabilities | connectors / `mcp.json` |
+
+**Skills** (agentskills.io / Anthropic open format) reach the model by progressive
+disclosure: names + descriptions go in the system prompt; the model calls
+`load_skill` to pull full instructions only when a task matches. An identity can
+also `learn_skill` — saving a workflow it worked out, reusable by name next time.
+
+**Specialists** are separate agent runs with their own persona, model tier, and
+tool subset. The orchestrator dispatches a focused task to one by name
+(`dispatch(agent, task)`); it runs in isolation and returns its result — good for
+focus, parallelism, and running grunt work at a cheaper tier. Define one:
+
+```markdown
+---
+name: researcher
+description: Deep web research; returns a sourced brief.
+tier: fast
+tools: web_search, web_fetch
+---
+You are a research specialist. Find concrete, sourced facts and return a brief.
+```
+
+`harness skills` / `harness agents` / `harness profiles` list each layer. A skill
+is a *recipe*; a specialist is a *separate worker*.
 
 ## Status
 
