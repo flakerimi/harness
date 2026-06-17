@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/router"
 	"github.com/flakerimi/harness/schedule"
+	"github.com/flakerimi/harness/server"
 	"github.com/flakerimi/harness/session"
 	"github.com/flakerimi/harness/skill"
 	"github.com/flakerimi/harness/tool"
@@ -65,6 +67,9 @@ func main() {
 			return
 		case "schedule":
 			runSchedule(os.Args[2:])
+			return
+		case "serve":
+			runServe(os.Args[2:])
 			return
 		}
 	}
@@ -941,6 +946,62 @@ func clip(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// runServe starts the HTTP+SSE server, so the same engine that powers the CLI
+// can back a web UI, app, or chat channel. Each request builds an agent for the
+// requested identity via the shared buildAgent and streams the turn over SSE.
+func runServe(args []string) {
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	addr := fs.String("addr", ":8080", "listen address")
+	providerSlug := fs.String("provider", "mock", "provider slug: mock | anthropic|claude | openai | deepseek | gemini | ollama | lmstudio")
+	model := fs.String("model", "", "explicit model id — overrides automatic routing")
+	maxTokens := fs.Int("max-tokens", 4096, "max output tokens")
+	root := fs.String("root", ".", "workspace root for filesystem tools")
+	bash := fs.Bool("bash", false, "enable the bash tool (runs shell commands — trusted skills only)")
+	compact := fs.Int("compact", 120000, "summarize older turns once estimated tokens exceed this (0 disables)")
+	_ = fs.Parse(args)
+
+	srv := &server.Server{
+		DefaultProfile: activeProfile(),
+		Factory: func(ctx context.Context, profileName string) (*agent.Agent, error) {
+			return buildAgent(ctx, agentSpec{
+				providerSlug:  *providerSlug,
+				model:         *model,
+				system:        "You are a helpful assistant.",
+				maxTokens:     *maxTokens,
+				root:          *root,
+				profileName:   profileName,
+				tier:          "reasoning",
+				route:         true,
+				classify:      false,
+				escalate:      true,
+				bash:          *bash,
+				compactTokens: *compact,
+			})
+		},
+		Sessions: func(profileName string) *session.Store {
+			return session.NewStore(profile.SessionsDir(profileName))
+		},
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	hs := &http.Server{Addr: *addr, Handler: srv.Handler()}
+	go func() {
+		<-ctx.Done()
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = hs.Shutdown(shutCtx)
+	}()
+
+	fmt.Fprintf(os.Stderr, "harness serve · %s · default profile %q\n", *addr, activeProfile())
+	if err := hs.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	fmt.Fprintln(os.Stderr, "stopped")
 }
 
 func modelsConfigPath() string {
