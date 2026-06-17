@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -36,13 +38,14 @@ func runChannel(args []string) {
 	}
 }
 
-// runTelegram runs the Telegram bot loop: each inbound message resumes that
-// chat's own session (so the conversation has memory), runs a turn, and replies.
+// runTelegram runs the Telegram bot loop. Each chat resumes its own session and
+// can switch identity (/profile) and model (/model) in-chat; each identity keeps
+// its own account, memory, and conversation thread.
 func runTelegram(args []string) {
 	fs := flag.NewFlagSet("channel telegram", flag.ExitOnError)
 	token := fs.String("token", "", "Telegram bot token (or $TELEGRAM_BOT_TOKEN)")
 	providerSlug := fs.String("provider", "mock", "model provider slug")
-	profileFlag := fs.String("profile", "", "identity profile (default from config)")
+	profileFlag := fs.String("profile", "", "default identity profile (default from config)")
 	compact := fs.Int("compact", 120000, "summarize older turns once estimated tokens exceed this (0 disables)")
 	allow := fs.String("allow", "", "comma-separated Telegram chat ids allowed to use the bot (or $HARNESS_TELEGRAM_ALLOW); empty = open to anyone")
 	_ = fs.Parse(args)
@@ -56,10 +59,10 @@ func runTelegram(args []string) {
 		os.Exit(2)
 	}
 
-	profileName := *profileFlag
-	if profileName == "" {
+	defaultProfile := *profileFlag
+	if defaultProfile == "" {
 		cfg, _ := config.Load()
-		profileName = cfg.Profile()
+		defaultProfile = cfg.Profile()
 	}
 
 	allowSpec := *allow
@@ -76,14 +79,17 @@ func runTelegram(args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	store := session.NewStore(profile.SessionsDir(profileName))
+	identities := newChatIdentities()
+	storeFor := func(p string) *session.Store { return session.NewStore(profile.SessionsDir(p)) }
 	bot := telegram.New(tok)
 
 	// Advertise the slash commands in Telegram's "/" menu / autocomplete.
 	if err := bot.SetCommands(ctx, []telegram.Command{
+		{Command: "profile", Description: "Switch identity: /profile <name> (e.g. basecode)"},
+		{Command: "profiles", Description: "List identities and show the current one"},
 		{Command: "model", Description: "Switch model: /model <provider> [model]"},
-		{Command: "models", Description: "List providers and show the current one"},
-		{Command: "status", Description: "Show current model and conversation length"},
+		{Command: "models", Description: "Pick a provider/model from a menu"},
+		{Command: "status", Description: "Show current identity, model, and length"},
 		{Command: "reset", Description: "Start this conversation fresh"},
 		{Command: "help", Description: "Show available commands"},
 	}); err != nil {
@@ -96,6 +102,13 @@ func runTelegram(args []string) {
 			fmt.Fprintf(os.Stderr, "blocked chat %d (%s): %q\n", chatID, user, clip(text, 60))
 			return "🔒 This is a private assistant."
 		}
+		curProfile := identities.get(chatID, defaultProfile)
+
+		// Identity switching (/profile, /profiles) — changes which identity (and
+		// thus account/memory/thread) this chat uses.
+		if reply, handled := identityCommand(identities, chatID, text, curProfile); handled {
+			return reply
+		}
 		// /model (no args) and /models open the interactive provider→model menu.
 		if isMenuCommand(text) {
 			if err := bot.SendKeyboard(ctx, chatID, "Pick a provider:", providerMenuKeyboard()); err != nil {
@@ -104,15 +117,15 @@ func runTelegram(args []string) {
 			return ""
 		}
 
+		store := storeFor(curProfile)
 		sessID := "tg-" + strconv.FormatInt(chatID, 10)
 		sess, err := store.Load(sessID)
 		if err != nil {
 			return "sorry — I couldn't load our conversation: " + err.Error()
 		}
 
-		// Other slash commands (/model kimi, /reset, …) are handled here and never
-		// reach the model — they let you switch model, reset, etc. from the chat.
-		if reply, isCmd := telegramCommand(store, sess, text, *providerSlug); isCmd {
+		// Model/reset/status/help commands operate on the current identity's session.
+		if reply, isCmd := telegramCommand(store, sess, text, *providerSlug, curProfile); isCmd {
 			return reply
 		}
 
@@ -124,7 +137,7 @@ func runTelegram(args []string) {
 			System:    "You are a helpful assistant replying over Telegram. Keep replies concise and chat-friendly.",
 			MaxTokens: 4096,
 			Root:      ".",
-			Profile:   profileName,
+			Profile:   curProfile,
 			Tier:      "reasoning",
 			Route:     true,
 			Classify:  false,
@@ -150,7 +163,8 @@ func runTelegram(args []string) {
 		return out
 	}
 
-	// onCallback handles inline-keyboard taps from the /model menu.
+	// onCallback handles inline-keyboard taps from the /model menu, against the
+	// chat's current identity.
 	onCallback := func(ctx context.Context, chatID, messageID int64, callbackID, data, user string) {
 		if len(allowed) > 0 && !allowed[chatID] {
 			_ = bot.AnswerCallback(ctx, callbackID, "not allowed")
@@ -166,6 +180,7 @@ func runTelegram(args []string) {
 			_ = bot.AnswerCallback(ctx, callbackID, "")
 		case strings.HasPrefix(data, "s:"):
 			slug, model, _ := strings.Cut(strings.TrimPrefix(data, "s:"), ":")
+			store := storeFor(identities.get(chatID, defaultProfile))
 			sessID := "tg-" + strconv.FormatInt(chatID, 10)
 			sess, err := store.Load(sessID)
 			if err != nil {
@@ -184,7 +199,7 @@ func runTelegram(args []string) {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "channel telegram · profile=%s · provider=%s — Ctrl-C to stop\n", profileName, *providerSlug)
+	fmt.Fprintf(os.Stderr, "channel telegram · default identity=%s · provider=%s — Ctrl-C to stop\n", defaultProfile, *providerSlug)
 	if err := bot.Run(ctx, responder, onCallback, func(e error) { fmt.Fprintln(os.Stderr, "telegram:", e) }); err != nil && err != context.Canceled {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
@@ -192,10 +207,42 @@ func runTelegram(args []string) {
 	fmt.Fprintln(os.Stderr, "stopped")
 }
 
-// telegramCommand handles in-chat slash commands. It returns (reply, true) when
-// the message is a command (which is then NOT sent to the model), persisting any
-// change to the session. defProvider is the bot's launch-default provider.
-func telegramCommand(store *session.Store, sess *session.Session, text, defProvider string) (string, bool) {
+// identityCommand handles /profile and /profiles — switching which identity a
+// chat is talking to. Each identity has its own account, memory, and thread.
+func identityCommand(ids *chatIdentities, chatID int64, text, cur string) (string, bool) {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 0 || !strings.HasPrefix(fields[0], "/") {
+		return "", false
+	}
+	cmd := strings.ToLower(strings.TrimPrefix(fields[0], "/"))
+	cmd, _, _ = strings.Cut(cmd, "@")
+
+	switch cmd {
+	case "profiles":
+		return "Identities: " + strings.Join(profile.Names(), ", ") +
+			"\nCurrent: " + cur +
+			"\n\nSwitch with: /profile <name>", true
+	case "profile":
+		if len(fields) < 2 {
+			return "usage: /profile <name>\nIdentities: " + strings.Join(profile.Names(), ", ") +
+				"\nCurrent: " + cur, true
+		}
+		name := strings.ToLower(fields[1])
+		if !slices.Contains(profile.Names(), name) {
+			return "unknown identity " + name + ".\nIdentities: " + strings.Join(profile.Names(), ", "), true
+		}
+		if err := ids.set(chatID, name); err != nil {
+			return "couldn't switch: " + err.Error(), true
+		}
+		return "✓ now acting as " + name + " — its own account, memory, and conversation.", true
+	}
+	return "", false
+}
+
+// telegramCommand handles model/reset/status/help. It returns (reply, true) when
+// the message is one of those commands (which is then NOT sent to the model),
+// persisting any change to the session.
+func telegramCommand(store *session.Store, sess *session.Session, text, defProvider, curProfile string) (string, bool) {
 	fields := strings.Fields(strings.TrimSpace(text))
 	if len(fields) == 0 || !strings.HasPrefix(fields[0], "/") {
 		return "", false
@@ -208,11 +255,13 @@ func telegramCommand(store *session.Store, sess *session.Session, text, defProvi
 	switch cmd {
 	case "start", "help":
 		return "I'm Morpheus, your assistant. Just talk to me normally. Commands:\n" +
+			"/profile <name> — switch identity (e.g. basecode)\n" +
+			"/profiles — list identities\n" +
 			"/model <provider> [model] — switch model (e.g. /model kimi)\n" +
-			"/models — list providers + show current\n" +
-			"/status — current model and conversation length\n" +
+			"/models — pick from a menu\n" +
+			"/status — current identity, model, and length\n" +
 			"/reset — start this conversation fresh\n\n" +
-			"Currently: " + cur + modelSuffix(sess.Model), true
+			"Identity: " + curProfile + " · Model: " + cur + modelSuffix(sess.Model), true
 
 	case "models":
 		return "Providers: " + strings.Join(provider.Slugs(), ", ") +
@@ -221,7 +270,7 @@ func telegramCommand(store *session.Store, sess *session.Session, text, defProvi
 
 	case "model":
 		if len(fields) < 2 {
-			return "usage: /model <provider> [model]\ne.g.  /model kimi   ·   /model deepseek deepseek-reasoner", true
+			return "usage: /model <provider> [model]\ne.g.  /model kimi   ·   /model deepseek deepseek-v4-flash", true
 		}
 		slug := strings.ToLower(fields[1])
 		if !slices.Contains(provider.Slugs(), slug) {
@@ -238,19 +287,53 @@ func telegramCommand(store *session.Store, sess *session.Session, text, defProvi
 		return "✓ switched to " + slug + modelSuffix(sess.Model) + providerKeyWarning(slug), true
 
 	case "status", "whoami":
-		return fmt.Sprintf("provider: %s%s\nprofile: telegram session %s\nturns: %d",
-			cur, modelSuffix(sess.Model), sess.ID, sess.Turns()), true
+		return fmt.Sprintf("identity: %s\nprovider: %s%s\nturns: %d",
+			curProfile, cur, modelSuffix(sess.Model), sess.Turns()), true
 
 	case "reset":
 		sess.History = nil
 		if err := store.Save(sess); err != nil {
 			return "couldn't reset: " + err.Error(), true
 		}
-		return "✓ conversation reset (still on " + cur + modelSuffix(sess.Model) + ")", true
+		return "✓ conversation reset (identity " + curProfile + ", model " + cur + modelSuffix(sess.Model) + ")", true
 
 	default:
 		return "unknown command /" + cmd + " — try /help", true
 	}
+}
+
+// chatIdentities persists which identity each chat is currently using, so the
+// choice survives restarts. It lives outside any single profile's dir (the
+// pointer can't depend on the thing it selects).
+type chatIdentities struct{ path string }
+
+func newChatIdentities() *chatIdentities {
+	return &chatIdentities{path: filepath.Join(profile.DataDir(""), "telegram", "identities.json")}
+}
+
+func (c *chatIdentities) load() map[string]string {
+	m := map[string]string{}
+	if raw, err := os.ReadFile(c.path); err == nil {
+		_ = json.Unmarshal(raw, &m)
+	}
+	return m
+}
+
+func (c *chatIdentities) get(chatID int64, def string) string {
+	if p := c.load()[strconv.FormatInt(chatID, 10)]; p != "" {
+		return p
+	}
+	return def
+}
+
+func (c *chatIdentities) set(chatID int64, profileName string) error {
+	m := c.load()
+	m[strconv.FormatInt(chatID, 10)] = profileName
+	if err := os.MkdirAll(filepath.Dir(c.path), 0o700); err != nil {
+		return err
+	}
+	raw, _ := json.MarshalIndent(m, "", "  ")
+	return os.WriteFile(c.path, raw, 0o600)
 }
 
 // parseChatIDs parses a comma-separated list of Telegram chat ids into a set.
