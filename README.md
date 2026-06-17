@@ -140,6 +140,20 @@ harness schedule daemon         # or keep a process checking every minute
 
 Specs: `every 30m` · `every 1d` · `daily 08:00` · `weekly mon 09:00`.
 
+### Daemon — one background process
+
+`harness daemon` runs the HTTP API + scheduler + (optionally) the Telegram bot
+together under one graceful shutdown — the thing you deploy and leave running.
+
+```sh
+harness daemon -provider claude                       # API + scheduler
+harness daemon -provider claude -telegram -allow 123  # + the Telegram bot
+harness daemon -print-launchd                         # macOS launch-agent plist
+```
+
+On a VPS it sits behind HTTPS (CapRover/nginx), with the API token as the org
+secret; `launchctl`/systemd (or the proxy's process manager) keeps it alive.
+
 ### Serve — HTTP + SSE API (local or a shared VPS)
 
 A token-gated JSON/SSE API so web, desktop, and mobile clients all talk to one
