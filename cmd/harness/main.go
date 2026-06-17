@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1018,8 +1019,18 @@ func runTelegram(args []string) {
 		if err != nil {
 			return "sorry — I couldn't load our conversation: " + err.Error()
 		}
+
+		// Slash commands (/, e.g. /model kimi) are handled here and never reach
+		// the model — they let you switch model, reset, etc. from the chat.
+		if reply, isCmd := telegramCommand(store, sess, text, *providerSlug); isCmd {
+			return reply
+		}
+
+		// Per-chat provider/model override (set via /model), else the launch flag.
+		provSlug := firstNonEmpty(sess.Provider, *providerSlug)
 		ag, err := buildAgent(ctx, agentSpec{
-			providerSlug:  *providerSlug,
+			providerSlug:  provSlug,
+			model:         sess.Model,
 			system:        "You are a helpful assistant replying over Telegram. Keep replies concise and chat-friendly.",
 			maxTokens:     4096,
 			root:          ".",
@@ -1055,6 +1066,85 @@ func runTelegram(args []string) {
 		os.Exit(1)
 	}
 	fmt.Fprintln(os.Stderr, "stopped")
+}
+
+// telegramCommand handles in-chat slash commands. It returns (reply, true) when
+// the message is a command (which is then NOT sent to the model), persisting any
+// change to the session. defProvider is the bot's launch-default provider.
+func telegramCommand(store *session.Store, sess *session.Session, text, defProvider string) (string, bool) {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 0 || !strings.HasPrefix(fields[0], "/") {
+		return "", false
+	}
+	// Normalize "/cmd@botname" (group mentions) → "cmd".
+	cmd := strings.ToLower(strings.TrimPrefix(fields[0], "/"))
+	cmd, _, _ = strings.Cut(cmd, "@")
+	cur := firstNonEmpty(sess.Provider, defProvider)
+
+	switch cmd {
+	case "start", "help":
+		return "I'm your assistant. Just talk to me normally. Commands:\n" +
+			"/model <provider> [model] — switch model (e.g. /model kimi)\n" +
+			"/models — list providers + show current\n" +
+			"/status — current model and conversation length\n" +
+			"/reset — start this conversation fresh\n\n" +
+			"Currently: " + cur + modelSuffix(sess.Model), true
+
+	case "models":
+		return "Providers: " + strings.Join(provider.Slugs(), ", ") +
+			"\nCurrent: " + cur + modelSuffix(sess.Model) +
+			"\n\nSwitch with: /model <provider> [model]", true
+
+	case "model":
+		if len(fields) < 2 {
+			return "usage: /model <provider> [model]\ne.g.  /model kimi   ·   /model deepseek deepseek-reasoner", true
+		}
+		slug := strings.ToLower(fields[1])
+		if !slices.Contains(provider.Slugs(), slug) {
+			return "unknown provider " + slug + ".\nProviders: " + strings.Join(provider.Slugs(), ", "), true
+		}
+		sess.Provider = slug
+		sess.Model = ""
+		if len(fields) >= 3 {
+			sess.Model = fields[2]
+		}
+		if err := store.Save(sess); err != nil {
+			return "couldn't save that: " + err.Error(), true
+		}
+		return "✓ switched to " + slug + modelSuffix(sess.Model) + providerKeyWarning(slug), true
+
+	case "status", "whoami":
+		return fmt.Sprintf("provider: %s%s\nprofile: telegram session %s\nturns: %d",
+			cur, modelSuffix(sess.Model), sess.ID, sess.Turns()), true
+
+	case "reset":
+		sess.History = nil
+		if err := store.Save(sess); err != nil {
+			return "couldn't reset: " + err.Error(), true
+		}
+		return "✓ conversation reset (still on " + cur + modelSuffix(sess.Model) + ")", true
+
+	default:
+		return "unknown command /" + cmd + " — try /help", true
+	}
+}
+
+func modelSuffix(model string) string {
+	if model == "" {
+		return ""
+	}
+	return " (" + model + ")"
+}
+
+// providerKeyWarning reuses the real build logic to flag a provider that won't
+// work yet (no key / missing endpoint), returning "" when it's good to go.
+func providerKeyWarning(slug string) string {
+	cfg, _ := config.Load()
+	pc := cfg.ProviderConf(slug)
+	if _, err := provider.BuildWith(slug, provider.BuildOptions{APIKey: pc.APIKey, BaseURL: pc.BaseURL}); err != nil {
+		return "\n⚠ " + err.Error()
+	}
+	return ""
 }
 
 // bufHandler collects the agent's streamed text into a buffer — for surfaces

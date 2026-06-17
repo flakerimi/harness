@@ -16,10 +16,14 @@ import (
 	"github.com/flakerimi/harness/provider"
 )
 
-// Session is one persisted conversation.
+// Session is one persisted conversation. Provider/Model are optional per-chat
+// overrides (set e.g. by a channel's /model command); empty means "use the
+// surface's default".
 type Session struct {
-	ID      string             `json:"id"`
-	History []provider.Message `json:"history"`
+	ID       string             `json:"id"`
+	Provider string             `json:"provider,omitempty"`
+	Model    string             `json:"model,omitempty"`
+	History  []provider.Message `json:"history"`
 }
 
 // Turns reports how many user messages the conversation holds — a cheap proxy

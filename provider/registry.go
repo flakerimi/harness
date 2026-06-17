@@ -139,6 +139,12 @@ func DefaultModel(slug string) string {
 	}
 }
 
+// Slugs lists the canonical provider slugs Build understands (one name each) —
+// for help text and validation in surfaces like the chat channel.
+func Slugs() []string {
+	return []string{"mock", "claude", "openai", "deepseek", "kimi", "fireworks", "mimo", "gemini", "ollama", "lmstudio"}
+}
+
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
