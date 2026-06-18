@@ -1,6 +1,16 @@
 <script setup>
 import { ref, reactive, computed, nextTick, onMounted } from 'vue'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { getProfiles, getModels, getHistory, chatStream } from './api.js'
+
+marked.setOptions({ breaks: true, gfm: true })
+
+// md renders assistant markdown to sanitized HTML. Output comes from an LLM and
+// is injected with v-html, so sanitizing is mandatory (no scripts/handlers).
+function md(text) {
+  return DOMPurify.sanitize(marked.parse(text || ''))
+}
 
 const conn = reactive({
   base: localStorage.getItem('harness.base') || 'http://localhost:8080',
@@ -161,7 +171,8 @@ onMounted(() => {
       <div class="messages" ref="scroller">
         <div v-for="(m, i) in messages" :key="i" :class="['msg', m.role]">
           <div class="who">{{ m.role === 'user' ? 'you' : 'morpheus' }}</div>
-          <div class="text">{{ m.text }}</div>
+          <div v-if="m.role === 'user'" class="text">{{ m.text }}</div>
+          <div v-else class="text md" v-html="md(m.text)"></div>
         </div>
         <p v-if="!messages.length" class="muted small">No messages yet — say hello.</p>
       </div>
