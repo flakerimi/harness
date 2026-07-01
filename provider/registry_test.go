@@ -45,7 +45,13 @@ func TestBuildWithMimoNeedsBaseURL(t *testing.T) {
 }
 
 func TestDefaultModelKimi(t *testing.T) {
-	if DefaultModel("kimi") != "moonshot-v1-8k" {
+	if DefaultModel("kimi") != "kimi-k2.6" {
 		t.Errorf("DefaultModel(kimi) = %q", DefaultModel("kimi"))
+	}
+}
+
+func TestBuildWithAppleNeedsBaseURL(t *testing.T) {
+	if _, err := BuildWith("apple", BuildOptions{}); err == nil {
+		t.Error("apple without a base_url should error (on-device, needs a bridge)")
 	}
 }

@@ -18,14 +18,14 @@ func TestTelegramCommandSwitchModel(t *testing.T) {
 	}
 
 	// /model with a provider + explicit model switches and persists.
-	reply, isCmd := telegramCommand(store, sess, "/model deepseek deepseek-reasoner", "claude", "personal")
+	reply, isCmd := telegramCommand(store, sess, "/model deepseek deepseek-v4-pro", "claude", "personal")
 	if !isCmd {
 		t.Fatal("/model should be a command")
 	}
 	if !strings.Contains(reply, "deepseek") {
 		t.Errorf("reply should confirm switch: %q", reply)
 	}
-	if sess.Provider != "deepseek" || sess.Model != "deepseek-reasoner" {
+	if sess.Provider != "deepseek" || sess.Model != "deepseek-v4-pro" {
 		t.Errorf("session not updated: provider=%q model=%q", sess.Provider, sess.Model)
 	}
 	reloaded, _ := store.Load("tg-1")

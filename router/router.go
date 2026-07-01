@@ -105,11 +105,25 @@ func DefaultTable() *Table {
 	t.Set("openai", TierBalanced, "gpt-4o")
 	t.Set("openai", TierFast, "gpt-4o-mini")
 
-	// DeepSeek — runs through the OpenAI-compatible adapter; reasoner/chat is a
-	// natural reasoning/fast split within one provider.
-	t.Set("deepseek", TierReasoning, "deepseek-reasoner")
-	t.Set("deepseek", TierBalanced, "deepseek-chat")
-	t.Set("deepseek", TierFast, "deepseek-chat")
+	// DeepSeek — v4 pro for the hard tiers, v4 flash for cheap/fast.
+	t.Set("deepseek", TierReasoning, "deepseek-v4-pro")
+	t.Set("deepseek", TierBalanced, "deepseek-v4-pro")
+	t.Set("deepseek", TierFast, "deepseek-v4-flash")
+
+	// Kimi (Moonshot) — k2.6 general, k2.5 for the fast tier.
+	t.Set("kimi", TierReasoning, "kimi-k2.6")
+	t.Set("kimi", TierBalanced, "kimi-k2.6")
+	t.Set("kimi", TierFast, "kimi-k2.5")
+
+	// Fireworks — hosted open models; deepseek-v4-pro reasons, kimi for the rest.
+	t.Set("fireworks", TierReasoning, "accounts/fireworks/models/deepseek-v4-pro")
+	t.Set("fireworks", TierBalanced, "accounts/fireworks/models/kimi-k2p6")
+	t.Set("fireworks", TierFast, "accounts/fireworks/models/kimi-k2p5")
+
+	// MiMo (Xiaomi) — 2.5 pro for reasoning, 2.5 otherwise.
+	t.Set("mimo", TierReasoning, "mimo-v2.5-pro")
+	t.Set("mimo", TierBalanced, "mimo-v2.5")
+	t.Set("mimo", TierFast, "mimo-v2.5")
 
 	// Local runtimes — one model, all tiers.
 	for _, slug := range []string{"ollama", "lmstudio"} {

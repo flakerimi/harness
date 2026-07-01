@@ -108,8 +108,28 @@ func BuildWith(slug string, opts BuildOptions) (Provider, error) {
 		return NewOpenAI("ollama", base("OLLAMA_BASE_URL", "http://localhost:11434/v1"), key()), nil
 	case "lmstudio", "lm-studio":
 		return NewOpenAI("lmstudio", base("LMSTUDIO_BASE_URL", "http://localhost:1234/v1"), key()), nil
+	case "apple", "apple-foundation", "foundation":
+		// Apple's Foundation Models are on-device (no public HTTP endpoint); this
+		// talks to a local OpenAI-compatible bridge you run in front of them.
+		b := base("APPLE_BASE_URL", "")
+		if b == "" {
+			return nil, fmt.Errorf("provider %q: Apple Foundation Models are on-device — run a local OpenAI-compatible bridge and set its endpoint (providers.apple.base_url or $APPLE_BASE_URL), plus providers.apple.model", slug)
+		}
+		return NewOpenAI("apple", b, key("APPLE_API_KEY")), nil
+	case "qwen", "dashscope", "alibaba":
+		// Qwen via its OpenAI-compatible endpoint (Alibaba DashScope). Set the
+		// endpoint explicitly so no unverified URL is assumed.
+		k := key("DASHSCOPE_API_KEY", "QWEN_API_KEY")
+		if k == "" {
+			return nil, errNoKey(slug, "DASHSCOPE_API_KEY")
+		}
+		b := base("QWEN_BASE_URL", "")
+		if b == "" {
+			return nil, fmt.Errorf("provider %q: set its OpenAI-compatible endpoint (providers.qwen.base_url or $QWEN_BASE_URL — e.g. your DashScope compatible-mode URL)", slug)
+		}
+		return NewOpenAI("qwen", b, k), nil
 	default:
-		return nil, fmt.Errorf("unknown provider %q (known: mock, anthropic|claude, openai, deepseek, kimi|moonshot, fireworks, mimo, gemini, ollama, lmstudio)", slug)
+		return nil, fmt.Errorf("unknown provider %q (known: mock, anthropic|claude, openai, deepseek, kimi|moonshot, fireworks, mimo, gemini, ollama, lmstudio, apple)", slug)
 	}
 }
 
@@ -125,15 +145,21 @@ func DefaultModel(slug string) string {
 	case "openai", "chatgpt":
 		return "gpt-4o"
 	case "deepseek":
-		return "deepseek-chat"
+		return "deepseek-v4-pro"
 	case "kimi", "moonshot":
-		return "moonshot-v1-8k"
+		return "kimi-k2.6"
+	case "fireworks":
+		return "accounts/fireworks/models/kimi-k2p6"
+	case "mimo":
+		return "mimo-v2.5-pro"
 	case "gemini", "google":
 		return "gemini-2.0-flash"
 	case "ollama":
 		return "llama3.1"
 	case "lmstudio", "lm-studio":
 		return "local-model"
+	case "apple", "apple-foundation", "foundation":
+		return "" // configure providers.apple.model — depends on your local bridge
 	default:
 		return "mock"
 	}
@@ -142,7 +168,7 @@ func DefaultModel(slug string) string {
 // Slugs lists the canonical provider slugs Build understands (one name each) —
 // for help text and validation in surfaces like the chat channel.
 func Slugs() []string {
-	return []string{"mock", "claude", "openai", "deepseek", "kimi", "fireworks", "mimo", "gemini", "ollama", "lmstudio"}
+	return []string{"mock", "claude", "openai", "deepseek", "kimi", "fireworks", "mimo", "qwen", "gemini", "ollama", "lmstudio", "apple"}
 }
 
 // ModelInfo is one selectable model for a provider: a friendly label plus the
@@ -156,21 +182,30 @@ type ModelInfo struct {
 // and pickers. An empty list means the provider is used with its default model.
 func Models(slug string) []ModelInfo {
 	switch strings.ToLower(strings.TrimSpace(slug)) {
+	case "anthropic", "claude":
+		return []ModelInfo{
+			{"opus-4.8", "claude-opus-4-8"}, {"sonnet-4.6", "claude-sonnet-4-6"},
+			{"haiku-4.5", "claude-haiku-4-5"}, {"fable-5", "claude-fable-5"},
+		}
 	case "deepseek":
 		return []ModelInfo{{"v4-pro", "deepseek-v4-pro"}, {"v4-flash", "deepseek-v4-flash"}}
+	case "kimi", "moonshot":
+		return []ModelInfo{
+			{"k2.6", "kimi-k2.6"}, {"k2.5", "kimi-k2.5"},
+			{"k2.7-code", "kimi-k2.7-code"},
+			{"v1-128k", "moonshot-v1-128k"}, {"v1-32k", "moonshot-v1-32k"},
+		}
 	case "fireworks":
 		return []ModelInfo{
 			{"kimi-k2p6", "accounts/fireworks/models/kimi-k2p6"},
-			{"deepseek-v4-pro (1M)", "accounts/fireworks/models/deepseek-v4-pro"},
 			{"kimi-k2p5", "accounts/fireworks/models/kimi-k2p5"},
+			{"deepseek-v4-pro (1M)", "accounts/fireworks/models/deepseek-v4-pro"},
+			{"glm-5p2", "accounts/fireworks/models/glm-5p2"},
 			{"glm-5p1", "accounts/fireworks/models/glm-5p1"},
 			{"gpt-oss-120b", "accounts/fireworks/models/gpt-oss-120b"},
 		}
 	case "mimo":
-		return []ModelInfo{
-			{"v2.5-pro", "mimo-v2.5-pro"}, {"v2.5", "mimo-v2.5"},
-			{"v2-pro", "mimo-v2-pro"}, {"v2-flash", "mimo-v2-flash"}, {"v2-omni", "mimo-v2-omni"},
-		}
+		return []ModelInfo{{"v2.5-pro", "mimo-v2.5-pro"}, {"v2.5", "mimo-v2.5"}}
 	default:
 		return nil
 	}

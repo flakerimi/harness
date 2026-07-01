@@ -16,8 +16,11 @@ func TestDefaultTableResolve(t *testing.T) {
 		{"anthropic", TierReasoning, "claude-opus-4-8"},
 		{"anthropic", TierFast, "claude-haiku-4-5"},
 		{"openai", TierFast, "gpt-4o-mini"},
-		{"deepseek", TierReasoning, "deepseek-reasoner"},
-		{"deepseek", TierFast, "deepseek-chat"},
+		{"deepseek", TierReasoning, "deepseek-v4-pro"},
+		{"deepseek", TierFast, "deepseek-v4-flash"},
+		{"kimi", TierReasoning, "kimi-k2.6"},
+		{"fireworks", TierFast, "accounts/fireworks/models/kimi-k2p5"},
+		{"mimo", TierReasoning, "mimo-v2.5-pro"},
 	}
 	for _, c := range cases {
 		if got := tbl.Resolve(c.provider, c.tier).Model; got != c.want {
