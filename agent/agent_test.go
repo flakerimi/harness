@@ -66,6 +66,7 @@ type recHandler struct {
 	toolResults int
 	stop        string
 	routes      []string // "tier:model" per turn
+	critiqued   bool
 }
 
 func (r *recHandler) OnText(d string)                      { r.text.WriteString(d) }
@@ -74,6 +75,7 @@ func (r *recHandler) OnToolResult(_ string, _ tool.Result) { r.toolResults++ }
 func (r *recHandler) OnUsage(_ provider.Usage)             {}
 func (r *recHandler) OnStop(reason string)                 { r.stop = reason }
 func (r *recHandler) OnRoute(tier, model string)           { r.routes = append(r.routes, tier+":"+model) }
+func (r *recHandler) OnCritique(_ int, _ string)           { r.critiqued = true }
 
 func TestAgentToolLoop(t *testing.T) {
 	et := &echoTool{}
@@ -98,6 +100,84 @@ func TestAgentToolLoop(t *testing.T) {
 	if got := h.text.String(); got != "done" {
 		t.Errorf("final text = %q, want %q", got, "done")
 	}
+}
+
+// critiqueProvider scripts a critique loop: turn 0 is a weak answer, turn 1 is
+// the critic (finds a problem), turn 2 is the revised answer, turn 3 is the
+// critic again (approves). The agent's critique() call and the answer turns
+// share this provider, so odd turns are critic calls.
+type critiqueProvider struct{ turn int }
+
+func (p *critiqueProvider) Name() string { return "critique" }
+
+func (p *critiqueProvider) Stream(_ context.Context, req provider.Request, emit func(provider.Event)) error {
+	defer func() { p.turn++ }()
+	text := func(s string) {
+		emit(provider.Event{Type: provider.EventTextDelta, TextDelta: s})
+		emit(provider.Event{Type: provider.EventStop, StopReason: provider.StopEndTurn})
+	}
+	// A critic call is the one whose system prompt asks for a review.
+	isCritic := strings.Contains(req.System, "strict reviewer")
+	switch {
+	case !isCritic && p.turn == 0:
+		text("weak answer")
+	case isCritic && p.turn == 1:
+		text("- missing the actual result")
+	case !isCritic && p.turn == 2:
+		text("revised answer with the result")
+	default:
+		text("OK")
+	}
+	return nil
+}
+
+func TestAgentCritiqueLoop(t *testing.T) {
+	reg := tool.NewRegistry()
+	ag := New(&critiqueProvider{}, reg, Options{Model: "x", Critique: true})
+
+	h := &recHandler{}
+	msgs, err := ag.Continue(context.Background(), nil, "do the task", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The returned answer must be the revised one, not the weak first draft.
+	last := msgs[len(msgs)-1]
+	if got := messageText(last); !strings.Contains(got, "revised") {
+		t.Errorf("final answer = %q, want the revised one", got)
+	}
+	if !h.critiqued {
+		t.Error("handler should have been notified of the critique pass")
+	}
+}
+
+func TestAgentCritiqueApprovesGoodAnswer(t *testing.T) {
+	// A provider whose answer passes review on the first check → no revision.
+	reg := tool.NewRegistry()
+	ag := New(&okProvider{}, reg, Options{Model: "x", Critique: true})
+	h := &recHandler{}
+	if err := ag.Run(context.Background(), "task", h); err != nil {
+		t.Fatal(err)
+	}
+	if h.critiqued {
+		t.Error("a passing answer should not trigger a revision")
+	}
+	if got := h.text.String(); got != "good answer" {
+		t.Errorf("final text = %q, want the original (unrevised)", got)
+	}
+}
+
+// okProvider answers once, and its critic call always approves.
+type okProvider struct{}
+
+func (okProvider) Name() string { return "ok" }
+func (okProvider) Stream(_ context.Context, req provider.Request, emit func(provider.Event)) error {
+	if strings.Contains(req.System, "strict reviewer") {
+		emit(provider.Event{Type: provider.EventTextDelta, TextDelta: "OK"})
+	} else {
+		emit(provider.Event{Type: provider.EventTextDelta, TextDelta: "good answer"})
+	}
+	emit(provider.Event{Type: provider.EventStop, StopReason: provider.StopEndTurn})
+	return nil
 }
 
 func TestAgentParallelTools(t *testing.T) {

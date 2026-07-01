@@ -40,7 +40,8 @@ type Spec struct {
 	Classify  bool
 	Escalate  bool
 	Bash      bool
-	Compact   int // summarizing-compaction token budget; 0 disables
+	Compact   int  // summarizing-compaction token budget; 0 disables
+	Critique  bool // run a critic→revise pass before returning a final answer
 }
 
 // memDigestCap bounds how many memories are injected into the system prompt;
@@ -79,6 +80,7 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		Caps:          caps,
 		Env:           &tool.Env{Root: spec.Root},
 		CompactTokens: spec.Compact,
+		Critique:      spec.Critique,
 	}
 	toolReg := reg // tools the orchestrator uses
 

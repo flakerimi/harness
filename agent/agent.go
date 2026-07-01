@@ -50,12 +50,26 @@ type Options struct {
 	BaseTier router.Tier   // starting tier; defaults to reasoning
 	Escalate bool          // retry a turn one tier up when it produces nothing usable
 	Classify bool          // pre-classify the task (a fast-tier call) to pick BaseTier
+
+	// Self-critique. When Critique is set, a final answer is reviewed by a critic
+	// pass before it's returned; if the critic finds concrete problems, the loop
+	// runs once more to revise (up to MaxCritique passes, default 1). This is the
+	// in-task quality loop — it makes a single answer better, not the agent
+	// smarter over time.
+	Critique    bool
+	MaxCritique int
 }
 
 // RouteAware is an optional Handler extension told which tier/model runs each
 // turn — handy for surfacing automatic model switching.
 type RouteAware interface {
 	OnRoute(tier, model string)
+}
+
+// CritiqueAware is an optional Handler extension told when a critic pass sends
+// the answer back for revision — so a surface can show "revising…".
+type CritiqueAware interface {
+	OnCritique(pass int, issues string)
 }
 
 // Agent binds a Provider and a tool Registry into a runnable loop.
@@ -109,6 +123,7 @@ func (a *Agent) Continue(ctx context.Context, history []provider.Message, userIn
 	if maxTurns <= 0 {
 		maxTurns = 16
 	}
+	critiques := 0
 
 	for range maxTurns {
 		model := a.modelFor(tier)
@@ -127,6 +142,22 @@ func (a *Agent) Continue(ctx context.Context, history []provider.Message, userIn
 
 		msgs = append(msgs, assistant)
 		if stop != provider.StopToolUse {
+			// Self-critique: before accepting a final answer, optionally have a
+			// critic check it. If it finds concrete problems, feed them back and
+			// loop once more to revise — bounded by MaxCritique.
+			if a.opts.Critique && stop == provider.StopEndTurn && critiques < a.maxCritique() {
+				if issues := a.critique(ctx, userInput, assistant); issues != "" {
+					critiques++
+					if ca, ok := h.(CritiqueAware); ok {
+						ca.OnCritique(critiques, issues)
+					}
+					msgs = append(msgs, provider.Message{
+						Role:    "user",
+						Content: []provider.Block{{Type: provider.BlockText, Text: revisePrompt(issues)}},
+					})
+					continue
+				}
+			}
 			h.OnStop(stop)
 			return msgs, nil
 		}
@@ -179,6 +210,67 @@ func (a *Agent) notifyRoute(h Handler, tier router.Tier, model string) {
 	if ra, ok := h.(RouteAware); ok {
 		ra.OnRoute(string(tier), model)
 	}
+}
+
+func (a *Agent) maxCritique() int {
+	if a.opts.MaxCritique > 0 {
+		return a.opts.MaxCritique
+	}
+	return 1
+}
+
+// critique asks a critic model to review the assistant's answer against the
+// task. It returns concrete problems to fix, or "" when the answer passes (or
+// on any error — a critic must never block a usable answer). The critic runs at
+// the reasoning tier so a weaker worker's answer is checked by a strong model.
+func (a *Agent) critique(ctx context.Context, task string, answer provider.Message) string {
+	ans := messageText(answer)
+	if strings.TrimSpace(ans) == "" {
+		return ""
+	}
+	var sb strings.Builder
+	err := a.prov.Stream(ctx, provider.Request{
+		Model:     a.modelFor(router.TierReasoning),
+		MaxTokens: 512,
+		System:    "You are a strict reviewer. Check the assistant's ANSWER against the TASK for correctness, completeness, and whether it did what was asked. If it is good, reply with exactly: OK. Otherwise list the concrete problems to fix as short bullet points — no preamble, no praise.",
+		Messages:  []provider.Message{{Role: "user", Content: []provider.Block{{Type: provider.BlockText, Text: "TASK:\n" + task + "\n\nANSWER:\n" + ans}}}},
+	}, func(ev provider.Event) {
+		if ev.Type == provider.EventTextDelta {
+			sb.WriteString(ev.TextDelta)
+		}
+	})
+	if err != nil {
+		return "" // fail open
+	}
+	out := strings.TrimSpace(sb.String())
+	if out == "" || approved(out) {
+		return ""
+	}
+	return out
+}
+
+// approved reports whether a critic reply signals "no problems" (a bare OK,
+// case- and punctuation-insensitive).
+func approved(s string) bool {
+	s = strings.ToUpper(strings.TrimSpace(s))
+	s = strings.TrimRight(s, ".!")
+	return s == "OK" || s == "LGTM"
+}
+
+func revisePrompt(issues string) string {
+	return "Revise your previous answer. A reviewer found these problems:\n" + issues +
+		"\n\nProduce an improved answer that fixes them. Do not mention this review."
+}
+
+// messageText joins the text blocks of a message.
+func messageText(m provider.Message) string {
+	var parts []string
+	for _, b := range m.Content {
+		if b.Type == provider.BlockText && b.Text != "" {
+			parts = append(parts, b.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 // fumbled reports a turn that produced nothing usable (empty assistant message)

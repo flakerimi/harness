@@ -100,6 +100,7 @@ func runAgent(args []string) {
 	classify := fs.Bool("classify", true, "classify task difficulty to pick the base tier")
 	escalate := fs.Bool("escalate", true, "escalate a tier when a turn produces nothing usable")
 	bash := fs.Bool("bash", false, "enable the bash tool (runs shell commands — trusted skills only)")
+	critique := fs.Bool("critique", false, "self-critique: review the answer and revise once before returning")
 	_ = fs.Parse(args)
 
 	prompt := strings.TrimSpace(strings.Join(fs.Args(), " "))
@@ -135,6 +136,7 @@ func runAgent(args []string) {
 		Classify:  *classify,
 		Escalate:  *escalate,
 		Bash:      *bash,
+		Critique:  *critique,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -164,6 +166,10 @@ func (cliHandler) OnText(delta string) { fmt.Print(delta) }
 
 func (cliHandler) OnRoute(tier, model string) {
 	fmt.Fprintf(os.Stderr, "  ↳ route: %s → %s\n", tier, model)
+}
+
+func (cliHandler) OnCritique(pass int, issues string) {
+	fmt.Fprintf(os.Stderr, "\n  ↻ critique pass %d — revising:\n    %s\n", pass, clip(issues, 200))
 }
 
 func (cliHandler) OnToolStart(name, id string) {
