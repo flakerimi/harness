@@ -138,23 +138,41 @@ func (b *Bot) SetCommands(ctx context.Context, cmds []Command) error {
 	return err
 }
 
-// Send delivers a text message to a chat.
+// Send delivers a plain-text message to a chat.
 func (b *Bot) Send(ctx context.Context, chatID int64, text string) error {
+	return b.sendMessage(ctx, chatID, text, nil, "")
+}
+
+// SendKeyboard sends a plain-text message with an inline keyboard.
+func (b *Bot) SendKeyboard(ctx context.Context, chatID int64, text string, rows [][]Button) error {
+	return b.sendMessage(ctx, chatID, text, rows, "")
+}
+
+// SendMarkdown renders md (the model's markdown) as Telegram HTML and sends it
+// with an inline keyboard. If Telegram rejects the HTML, it retries as plain
+// text so a reply is never dropped over a formatting glitch.
+func (b *Bot) SendMarkdown(ctx context.Context, chatID int64, md string, rows [][]Button) error {
+	if strings.TrimSpace(md) == "" {
+		return nil
+	}
+	if err := b.sendMessage(ctx, chatID, MarkdownToHTML(md), rows, "HTML"); err != nil {
+		return b.sendMessage(ctx, chatID, md, rows, "")
+	}
+	return nil
+}
+
+// sendMessage is the shared sendMessage call: optional inline keyboard and
+// parse mode ("" = plain, "HTML", "MarkdownV2"). Empty text is a no-op.
+func (b *Bot) sendMessage(ctx context.Context, chatID int64, text string, rows [][]Button, parseMode string) error {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
 	q := url.Values{}
 	q.Set("chat_id", strconv.FormatInt(chatID, 10))
 	q.Set("text", text)
-	_, err := b.call(ctx, "sendMessage", q)
-	return err
-}
-
-// SendKeyboard sends a message with an inline keyboard (rows of buttons).
-func (b *Bot) SendKeyboard(ctx context.Context, chatID int64, text string, rows [][]Button) error {
-	q := url.Values{}
-	q.Set("chat_id", strconv.FormatInt(chatID, 10))
-	q.Set("text", text)
+	if parseMode != "" {
+		q.Set("parse_mode", parseMode)
+	}
 	if err := setMarkup(q, rows); err != nil {
 		return err
 	}

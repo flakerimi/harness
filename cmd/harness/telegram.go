@@ -205,9 +205,9 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 		if out == "" {
 			out = "(no reply)"
 		}
-		// Send the reply with 👍/👎 feedback buttons, then return "" so the loop
-		// doesn't send it a second time. A plain send is the fallback on error.
-		if err := bot.SendKeyboard(ctx, chatID, out, feedbackButtons()); err != nil {
+		// Send the reply rendered as HTML (from the model's markdown) with 👍/👎
+		// feedback buttons, then return "" so the loop doesn't send it again.
+		if err := bot.SendMarkdown(ctx, chatID, out, feedbackButtons()); err != nil {
 			fmt.Fprintln(os.Stderr, "telegram: send:", err)
 			return out
 		}
