@@ -57,6 +57,56 @@ func (t *RememberTool) Run(_ context.Context, input json.RawMessage, _ *tool.Env
 	return tool.Result{Content: "remembered (" + filepath.Base(path) + ")"}, nil
 }
 
+// FeedbackTool records an in-the-moment correction as a durable lesson — so
+// when the user pushes back ("no, do it this way") it shapes future behavior
+// instead of evaporating at the end of the session. Lessons are memories tagged
+// "lesson", which Digest surfaces in a dedicated "apply these" section.
+type FeedbackTool struct {
+	store *Store
+}
+
+// NewFeedbackTool builds the record_feedback tool over a memory store.
+func NewFeedbackTool(store *Store) *FeedbackTool { return &FeedbackTool{store: store} }
+
+func (FeedbackTool) Spec() tool.Spec {
+	return tool.Spec{
+		Name:        "record_feedback",
+		Description: "Record a correction or standing preference the user just gave, as a durable lesson to apply next time. Call this whenever they push back, tell you to do something differently, or state how they want things done — so the lesson survives beyond this conversation.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"situation": map[string]any{"type": "string", "description": "When this applies — the context or trigger (e.g. 'drafting emails')."},
+				"lesson":    map[string]any{"type": "string", "description": "What to do differently or the preference to follow, as a directive."},
+			},
+			"required": []string{"lesson"},
+		},
+	}
+}
+
+func (t *FeedbackTool) Run(_ context.Context, input json.RawMessage, _ *tool.Env) (tool.Result, error) {
+	var args struct {
+		Situation string `json:"situation"`
+		Lesson    string `json:"lesson"`
+	}
+	if err := json.Unmarshal(input, &args); err != nil {
+		return tool.Result{Content: "invalid input: " + err.Error(), IsError: true}, nil
+	}
+	lesson := strings.TrimSpace(args.Lesson)
+	if lesson == "" {
+		return tool.Result{Content: "lesson is required", IsError: true}, nil
+	}
+	content := lesson
+	if s := strings.TrimSpace(args.Situation); s != "" {
+		content = "When " + s + ": " + lesson
+	}
+	content += "\n\nTags: lesson, feedback"
+	path, err := t.store.Save("", content)
+	if err != nil {
+		return tool.Result{Content: err.Error(), IsError: true}, nil
+	}
+	return tool.Result{Content: "recorded lesson (" + filepath.Base(path) + ")"}, nil
+}
+
 // ResurfaceTool surfaces a memory worth proactively revisiting — the engine of
 // the "resurface when relevant" loop for scheduled, unprompted check-ins. It
 // returns an aging note and rotates it to the back of the queue, so a run works

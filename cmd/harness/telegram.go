@@ -16,6 +16,7 @@ import (
 	"github.com/flakerimi/harness/app"
 	"github.com/flakerimi/harness/channel/telegram"
 	"github.com/flakerimi/harness/config"
+	"github.com/flakerimi/harness/memory"
 	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/session"
@@ -107,6 +108,11 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 	storeFor := func(p string) *session.Store { return session.NewStore(profile.SessionsDir(p)) }
 	bot := telegram.New(tok)
 
+	// Chats awaiting a correction after tapping 👎 — their next message is
+	// captured as a lesson. The bot loop is single-goroutine, so a plain map is
+	// safe (state is per-run; a restart just drops any pending prompt).
+	pendingFeedback := map[int64]bool{}
+
 	// Advertise the slash commands in Telegram's "/" menu / autocomplete.
 	if err := bot.SetCommands(ctx, []telegram.Command{
 		{Command: "profile", Description: "Switch identity: /profile <name> (e.g. basecode)"},
@@ -127,6 +133,21 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 			return "🔒 This is a private assistant."
 		}
 		curProfile := identities.get(chatID, defaultProfile)
+
+		// Correction capture: after 👎, the next non-command message is recorded
+		// as a durable lesson for this identity, closing the feedback loop.
+		if pendingFeedback[chatID] {
+			delete(pendingFeedback, chatID)
+			if !strings.HasPrefix(strings.TrimSpace(text), "/") {
+				fb := memory.NewFeedbackTool(memory.NewStore(profile.MemoryDir(curProfile)))
+				in, _ := json.Marshal(map[string]string{"lesson": text})
+				if res, _ := fb.Run(ctx, in, nil); res.IsError {
+					return "couldn't save that lesson: " + res.Content
+				}
+				return "✓ got it — I'll apply that next time."
+			}
+			// A command instead of a correction: drop the pending state, fall through.
+		}
 
 		// Identity switching (/profile, /profiles) — changes which identity (and
 		// thus account/memory/thread) this chat uses.
@@ -184,7 +205,13 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 		if out == "" {
 			out = "(no reply)"
 		}
-		return out
+		// Send the reply with 👍/👎 feedback buttons, then return "" so the loop
+		// doesn't send it a second time. A plain send is the fallback on error.
+		if err := bot.SendKeyboard(ctx, chatID, out, feedbackButtons()); err != nil {
+			fmt.Fprintln(os.Stderr, "telegram: send:", err)
+			return out
+		}
+		return ""
 	}
 
 	// onCallback handles inline-keyboard taps from the /model menu, against the
@@ -195,6 +222,13 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 			return
 		}
 		switch {
+		case data == "fb:up":
+			delete(pendingFeedback, chatID)
+			_ = bot.AnswerCallback(ctx, callbackID, "thanks! 👍")
+		case data == "fb:down":
+			pendingFeedback[chatID] = true
+			_ = bot.AnswerCallback(ctx, callbackID, "")
+			_ = bot.Send(ctx, chatID, "Sorry about that — what should I have done? Your next message becomes a lesson I'll remember.")
 		case data == "back":
 			_ = bot.EditMessage(ctx, chatID, messageID, "Pick a provider:", providerMenuKeyboard())
 			_ = bot.AnswerCallback(ctx, callbackID, "")
@@ -377,6 +411,15 @@ func modelSuffix(model string) string {
 		return ""
 	}
 	return " (" + model + ")"
+}
+
+// feedbackButtons is the 👍/👎 row attached under each model reply, so the user
+// can rate it in one tap. A 👎 opens the correction-capture flow.
+func feedbackButtons() [][]telegram.Button {
+	return [][]telegram.Button{{
+		{Text: "👍", CallbackData: "fb:up"},
+		{Text: "👎", CallbackData: "fb:down"},
+	}}
 }
 
 // isMenuCommand reports whether a message should open the provider→model menu:

@@ -230,6 +230,9 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		// aging note to revisit, for proactive scheduled check-ins.
 		toolReg.Register(memory.NewRecallTool(memStore))
 		toolReg.Register(memory.NewResurfaceTool(memStore, 0))
+		// Feedback-to-lesson: a correction the user gives now becomes a durable
+		// lesson (a tagged memory) that shapes future behavior.
+		toolReg.Register(memory.NewFeedbackTool(memStore))
 
 		// Self-improvement: let the identity write new skills it works out into
 		// its own skills dir, so the procedure is reusable by name next time.

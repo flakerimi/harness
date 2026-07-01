@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -92,30 +93,85 @@ func (s *Store) Save(name, content string) (string, error) {
 // remember nudge. Kept for callers that want the full set; Digest bounds it.
 func Context(mems []Memory) string { return Digest(mems, 0) }
 
-// Digest renders up to max memories (max <= 0 = all) for injection into the
-// system prompt, plus the remember nudge. When the store holds more than max,
-// it injects the first max and notes that the rest are searchable via the
-// recall tool — so a large second-brain memory doesn't bloat every prompt while
-// staying fully reachable on demand. Empty memories yield just the Instruction.
+// Digest renders memories for injection into the system prompt, plus the
+// remember nudge. Lessons (memories tagged "lesson" — corrections and standing
+// preferences) are surfaced first, in their own section, since they shape
+// behavior; plain facts follow, capped at max (max <= 0 = all) with the rest
+// reachable via the recall tool so a large store doesn't bloat every prompt.
+// Empty memories yield just the Instruction.
 func Digest(mems []Memory, max int) string {
 	if len(mems) == 0 {
 		return Instruction
 	}
-	shown, extra := mems, 0
-	if max > 0 && len(mems) > max {
-		shown, extra = mems[:max], len(mems)-max
+	var lessons, facts []Memory
+	for _, m := range mems {
+		if isLesson(m) {
+			lessons = append(lessons, m)
+		} else {
+			facts = append(facts, m)
+		}
 	}
+
 	var b strings.Builder
-	b.WriteString("## What you remember about the user\n")
-	for _, m := range shown {
-		fmt.Fprintf(&b, "- %s\n", oneLine(m.Content))
+	if len(lessons) > 0 {
+		b.WriteString("## Lessons you've learned (apply these)\n")
+		for _, m := range lessons {
+			fmt.Fprintf(&b, "- %s\n", oneLine(displayText(m.Content)))
+		}
+		b.WriteString("\n")
 	}
-	if extra > 0 {
-		fmt.Fprintf(&b, "- …and %d more — use the recall tool to search them.\n", extra)
+	shown, extra := facts, 0
+	if max > 0 && len(facts) > max {
+		shown, extra = facts[:max], len(facts)-max
 	}
-	b.WriteString("\n")
+	if len(shown) > 0 || extra > 0 {
+		b.WriteString("## What you remember about the user\n")
+		for _, m := range shown {
+			fmt.Fprintf(&b, "- %s\n", oneLine(displayText(m.Content)))
+		}
+		if extra > 0 {
+			fmt.Fprintf(&b, "- …and %d more — use the recall tool to search them.\n", extra)
+		}
+		b.WriteString("\n")
+	}
 	b.WriteString(Instruction)
 	return b.String()
+}
+
+// isLesson reports whether a memory is a behavioral lesson (tagged "lesson"),
+// as written by record_feedback or a lesson-tagged remember.
+func isLesson(m Memory) bool {
+	return slices.Contains(tagsOf(m.Content), "lesson")
+}
+
+// tagsOf extracts the lowercased tags from a memory body's "Tags:" line.
+func tagsOf(content string) []string {
+	for line := range strings.SplitSeq(content, "\n") {
+		line = strings.TrimSpace(line)
+		if len(line) >= 5 && strings.EqualFold(line[:5], "Tags:") {
+			var out []string
+			for t := range strings.SplitSeq(line[5:], ",") {
+				if t = strings.ToLower(strings.TrimSpace(t)); t != "" {
+					out = append(out, t)
+				}
+			}
+			return out
+		}
+	}
+	return nil
+}
+
+// displayText strips a trailing "Tags:" line so the digest reads cleanly (tags
+// are for retrieval/classification, not for showing back).
+func displayText(content string) string {
+	var keep []string
+	for line := range strings.SplitSeq(content, "\n") {
+		if t := strings.TrimSpace(line); len(t) >= 5 && strings.EqualFold(t[:5], "Tags:") {
+			continue
+		}
+		keep = append(keep, line)
+	}
+	return strings.TrimSpace(strings.Join(keep, "\n"))
 }
 
 // Instruction tells the assistant when to persist a memory.
