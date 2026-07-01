@@ -205,9 +205,13 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 		if out == "" {
 			out = "(no reply)"
 		}
-		// Send the reply rendered as HTML (from the model's markdown) with 👍/👎
-		// feedback buttons, then return "" so the loop doesn't send it again.
-		if err := bot.SendMarkdown(ctx, chatID, out, feedbackButtons()); err != nil {
+		// Render as HTML (from the model's markdown). Attach 👍/👎 only to
+		// substantial replies — short acks and one-liners don't need rating.
+		var rows [][]telegram.Button
+		if len(strings.TrimSpace(out)) >= feedbackMinChars {
+			rows = feedbackButtons()
+		}
+		if err := bot.SendMarkdown(ctx, chatID, out, rows); err != nil {
 			fmt.Fprintln(os.Stderr, "telegram: send:", err)
 			return out
 		}
@@ -413,8 +417,13 @@ func modelSuffix(model string) string {
 	return " (" + model + ")"
 }
 
-// feedbackButtons is the 👍/👎 row attached under each model reply, so the user
-// can rate it in one tap. A 👎 opens the correction-capture flow.
+// feedbackMinChars is the reply length above which 👍/👎 buttons are attached —
+// so short acknowledgements and one-liners stay clean while substantial answers
+// stay ratable.
+const feedbackMinChars = 200
+
+// feedbackButtons is the 👍/👎 row attached under a substantial model reply, so
+// the user can rate it in one tap. A 👎 opens the correction-capture flow.
 func feedbackButtons() [][]telegram.Button {
 	return [][]telegram.Button{{
 		{Text: "👍", CallbackData: "fb:up"},
