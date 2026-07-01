@@ -128,6 +128,36 @@ func BuildWith(slug string, opts BuildOptions) (Provider, error) {
 			return nil, fmt.Errorf("provider %q: set its OpenAI-compatible endpoint (providers.qwen.base_url or $QWEN_BASE_URL — e.g. your DashScope compatible-mode URL)", slug)
 		}
 		return NewOpenAI("qwen", b, k), nil
+	case "openrouter":
+		k := key("OPENROUTER_API_KEY")
+		if k == "" {
+			return nil, errNoKey(slug, "OPENROUTER_API_KEY")
+		}
+		return NewOpenAI("openrouter", base("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"), k), nil
+	case "mistral":
+		k := key("MISTRAL_API_KEY")
+		if k == "" {
+			return nil, errNoKey(slug, "MISTRAL_API_KEY")
+		}
+		return NewOpenAI("mistral", base("MISTRAL_BASE_URL", "https://api.mistral.ai/v1"), k), nil
+	case "zai", "zhipu", "glm":
+		k := key("ZAI_API_KEY", "ZHIPU_API_KEY")
+		if k == "" {
+			return nil, errNoKey(slug, "ZAI_API_KEY")
+		}
+		return NewOpenAI("zai", base("ZAI_BASE_URL", "https://api.z.ai/api/paas/v4"), k), nil
+	case "xai", "grok":
+		k := key("XAI_API_KEY")
+		if k == "" {
+			return nil, errNoKey(slug, "XAI_API_KEY")
+		}
+		return NewOpenAI("xai", base("XAI_BASE_URL", "https://api.x.ai/v1"), k), nil
+	case "together":
+		k := key("TOGETHER_API_KEY")
+		if k == "" {
+			return nil, errNoKey(slug, "TOGETHER_API_KEY")
+		}
+		return NewOpenAI("together", base("TOGETHER_BASE_URL", "https://api.together.xyz/v1"), k), nil
 	default:
 		return nil, fmt.Errorf("unknown provider %q (known: mock, anthropic|claude, openai, deepseek, kimi|moonshot, fireworks, mimo, gemini, ollama, lmstudio, apple)", slug)
 	}
@@ -154,12 +184,18 @@ func DefaultModel(slug string) string {
 		return "mimo-v2.5-pro"
 	case "gemini", "google":
 		return "gemini-2.0-flash"
+	case "qwen", "dashscope", "alibaba":
+		return "qwen-plus"
+	case "mistral":
+		return "mistral-medium-2508"
+	case "zai", "zhipu", "glm":
+		return "glm-4.7"
 	case "ollama":
 		return "llama3.1"
 	case "lmstudio", "lm-studio":
 		return "local-model"
-	case "apple", "apple-foundation", "foundation":
-		return "" // configure providers.apple.model — depends on your local bridge
+	case "openrouter", "xai", "grok", "together", "apple", "apple-foundation", "foundation":
+		return "" // aggregator / on-device / bring-your-own — set providers.<slug>.model
 	default:
 		return "mock"
 	}
@@ -168,7 +204,7 @@ func DefaultModel(slug string) string {
 // Slugs lists the canonical provider slugs Build understands (one name each) —
 // for help text and validation in surfaces like the chat channel.
 func Slugs() []string {
-	return []string{"mock", "claude", "openai", "deepseek", "kimi", "fireworks", "mimo", "qwen", "gemini", "ollama", "lmstudio", "apple"}
+	return []string{"mock", "claude", "openai", "deepseek", "kimi", "fireworks", "mimo", "qwen", "openrouter", "mistral", "zai", "xai", "together", "gemini", "ollama", "lmstudio", "apple"}
 }
 
 // ModelInfo is one selectable model for a provider: a friendly label plus the
@@ -206,6 +242,15 @@ func Models(slug string) []ModelInfo {
 		}
 	case "mimo":
 		return []ModelInfo{{"v2.5-pro", "mimo-v2.5-pro"}, {"v2.5", "mimo-v2.5"}}
+	case "qwen", "dashscope", "alibaba":
+		return []ModelInfo{
+			{"qwen3.7-max", "qwen3.7-max"}, {"qwen3.7-plus", "qwen3.7-plus"},
+			{"qwen-flash", "qwen-flash"}, {"qwen-max", "qwen-max"}, {"qwen-plus", "qwen-plus"},
+		}
+	case "mistral":
+		return []ModelInfo{{"medium-2508", "mistral-medium-2508"}, {"medium-2505", "mistral-medium-2505"}, {"nemo", "open-mistral-nemo"}}
+	case "zai", "zhipu", "glm":
+		return []ModelInfo{{"glm-4.7", "glm-4.7"}, {"glm-4.6", "glm-4.6"}, {"glm-4.5-air", "glm-4.5-air"}}
 	default:
 		return nil
 	}

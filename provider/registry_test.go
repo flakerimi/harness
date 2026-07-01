@@ -55,3 +55,27 @@ func TestBuildWithAppleNeedsBaseURL(t *testing.T) {
 		t.Error("apple without a base_url should error (on-device, needs a bridge)")
 	}
 }
+
+func TestNewOpenAICompatibleProviders(t *testing.T) {
+	// Each should build with a key and report the expected canonical name.
+	for slug, name := range map[string]string{
+		"openrouter": "openrouter", "mistral": "mistral", "zai": "zai",
+		"zhipu": "zai", "xai": "xai", "grok": "xai", "together": "together",
+	} {
+		p, err := BuildWith(slug, BuildOptions{APIKey: "k"})
+		if err != nil {
+			t.Errorf("BuildWith(%q) errored: %v", slug, err)
+			continue
+		}
+		if p.Name() != name {
+			t.Errorf("BuildWith(%q).Name() = %q, want %q", slug, p.Name(), name)
+		}
+	}
+	// Missing key is a clear error, not a silent build.
+	if _, err := BuildWith("mistral", BuildOptions{}); err == nil {
+		t.Error("mistral without a key should error")
+	}
+	if DefaultModel("qwen") != "qwen-plus" || DefaultModel("zai") != "glm-4.7" {
+		t.Error("qwen/zai defaults not set")
+	}
+}

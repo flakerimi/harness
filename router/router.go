@@ -125,6 +125,21 @@ func DefaultTable() *Table {
 	t.Set("mimo", TierBalanced, "mimo-v2.5")
 	t.Set("mimo", TierFast, "mimo-v2.5")
 
+	// Qwen (Alibaba DashScope) — 3.7 max reasons, 3.7 plus balances, flash is fast.
+	t.Set("qwen", TierReasoning, "qwen3.7-max")
+	t.Set("qwen", TierBalanced, "qwen3.7-plus")
+	t.Set("qwen", TierFast, "qwen-flash")
+
+	// Mistral — medium for the hard tiers, nemo for fast.
+	t.Set("mistral", TierReasoning, "mistral-medium-2508")
+	t.Set("mistral", TierBalanced, "mistral-medium-2508")
+	t.Set("mistral", TierFast, "open-mistral-nemo")
+
+	// Z.ai (Zhipu GLM) — 4.7 reasons, 4.6 balances, 4.5-air is cheap/fast.
+	t.Set("zai", TierReasoning, "glm-4.7")
+	t.Set("zai", TierBalanced, "glm-4.6")
+	t.Set("zai", TierFast, "glm-4.5-air")
+
 	// Local runtimes — one model, all tiers.
 	for _, slug := range []string{"ollama", "lmstudio"} {
 		t.Set(slug, TierReasoning, "llama3.1")
