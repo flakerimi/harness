@@ -18,7 +18,7 @@ a **schedule**, and improves itself.
 | **Soul** | identities — persona + routing tier + delegation | `profile/`, `harness profiles` |
 | **Memory** | per-identity second brain: a bounded digest is injected, `remember` saves (with tags), `recall` searches, `resurface` revisits aging notes | `memory/`, `harness memory` |
 | **Skills** | SKILL.md workflows (agentskills.io format), progressive disclosure | `skill/`, `harness skills` |
-| **Self-improvement** | the agent writes its own skills via `learn_skill` | `skill/` |
+| **Self-improvement** | writes its own skills (`learn_skill`); self-critiques answers (`-critique`); reflects on past chats into memory + skills (`harness reflect`) | `skill/`, `agent/`, `session/` |
 | **Sessions** | multi-turn conversations that persist across runs | `session/`, `harness chat` |
 | **Crons** | scheduled, proactive runs on a clock | `schedule/`, `harness schedule` |
 
@@ -112,6 +112,7 @@ harness skills add <name>     # install one from the registry
 harness memory                # what the identity remembers
 harness memory search <q>     # search that identity's memory
 harness sessions              # list stored conversations
+harness reflect               # review recent chats → learn (memory + skills)
 harness login [-provider claude]   # model-provider OAuth
 harness connect google             # integration OAuth (Calendar)
 harness connectors                 # what's connected + the tools exposed

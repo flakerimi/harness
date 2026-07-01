@@ -22,6 +22,7 @@ import (
 	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/router"
+	"github.com/flakerimi/harness/session"
 	"github.com/flakerimi/harness/skill"
 	"github.com/flakerimi/harness/subagent"
 	"github.com/flakerimi/harness/tool"
@@ -233,6 +234,10 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		// Self-improvement: let the identity write new skills it works out into
 		// its own skills dir, so the procedure is reusable by name next time.
 		toolReg.Register(skill.NewLearnTool(profile.SkillsDir(spec.Profile)))
+
+		// Reflection: let the identity read its own past conversations, so it can
+		// review and learn from them (the reflect skill drives this).
+		toolReg.Register(session.NewReviewTool(session.NewStore(profile.SessionsDir(spec.Profile))))
 	}
 
 	return agent.New(prov, toolReg, opts), nil

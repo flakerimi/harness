@@ -69,6 +69,9 @@ func main() {
 		case "onboard":
 			runOnboard(os.Args[2:])
 			return
+		case "reflect":
+			runReflect(os.Args[2:])
+			return
 		}
 	}
 	runAgent(os.Args[1:])

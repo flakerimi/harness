@@ -38,6 +38,31 @@ func (s *Session) Turns() int {
 	return n
 }
 
+// Transcript renders a conversation as a readable dialogue — user and assistant
+// text only; tool calls and results are omitted — for feeding a session into a
+// reflection or summary run.
+func Transcript(history []provider.Message) string {
+	var b strings.Builder
+	for _, m := range history {
+		var parts []string
+		for _, blk := range m.Content {
+			if blk.Type == provider.BlockText && strings.TrimSpace(blk.Text) != "" {
+				parts = append(parts, blk.Text)
+			}
+		}
+		if len(parts) == 0 {
+			continue // skip tool-only turns
+		}
+		switch m.Role {
+		case "user":
+			fmt.Fprintf(&b, "User: %s\n", strings.Join(parts, " "))
+		case "assistant":
+			fmt.Fprintf(&b, "Assistant: %s\n", strings.Join(parts, " "))
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
 // Store reads and writes sessions under a directory (a profile's sessions dir).
 type Store struct {
 	dir string
@@ -113,6 +138,38 @@ func (s *Store) List() ([]Meta, error) {
 		out = append(out, Meta{ID: id, Turns: sess.Turns()})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// Recent returns up to n sessions that have at least one user turn, most
+// recently modified first — the conversations a reflection run should review.
+func (s *Store) Recent(n int) ([]*Session, error) {
+	matches, _ := filepath.Glob(filepath.Join(s.dir, "*.json"))
+	type item struct {
+		id  string
+		mod int64
+	}
+	items := make([]item, 0, len(matches))
+	for _, p := range matches {
+		fi, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		items = append(items, item{id: strings.TrimSuffix(filepath.Base(p), ".json"), mod: fi.ModTime().UnixNano()})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].mod > items[j].mod })
+
+	var out []*Session
+	for _, it := range items {
+		if n > 0 && len(out) >= n {
+			break
+		}
+		sess, err := s.Load(it.id)
+		if err != nil || sess.Turns() == 0 {
+			continue
+		}
+		out = append(out, sess)
+	}
 	return out, nil
 }
 

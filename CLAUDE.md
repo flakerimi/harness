@@ -37,7 +37,9 @@ The design is a stack of narrow seams. Read these packages in order to understan
 
 5. **`app/app.go`** — **the composition root**. `app.Build(ctx, Spec)` wires provider + connectors/tools + skills + routing + profile (persona/delegation) + specialists + memory into a ready agent. If you add a capability that should reach every surface, wire it here. Surfaces stay thin.
 
-6. **Surfaces** — `cmd/harness/` (CLI subcommand dispatch in `main.go`), `server/` (HTTP+SSE: `POST /v1/chat`, `GET /v1/sessions`, `/healthz`), `channel/telegram/`, `schedule/` (proactive cron-like runs; a task's `Deliver` target like `telegram:<chatID>` pushes its output to a channel — see `deliver` in `cmd/harness/schedule.go`), `cmd/harness/daemon.go` (API + scheduler + Telegram under one shutdown).
+6. **Surfaces** — `cmd/harness/` (CLI subcommand dispatch in `main.go`), `server/` (HTTP+SSE: `POST /v1/chat`, `GET /v1/sessions`, `/healthz`), `channel/telegram/`, `schedule/` (proactive cron-like runs; a task's `Deliver` target like `telegram:<chatID>` pushes its output to a channel — see `deliver` in `cmd/harness/schedule.go`).
+
+**Self-improvement loops.** Three, composable: (1) *in-task critique* — `agent.Options.Critique`/`-critique` runs a reasoning-tier critic→revise pass before returning (fails open); (2) *reflection* — `harness reflect` + the `reflect` skill + `session.ReviewTool` (`review_sessions`) let an identity read its own past conversations and distill lessons into memory/skills; schedulable nightly with `-deliver`; (3) *feedback-to-lesson* (see the feedback tool + Telegram 👍/👎). Lessons land in memory (tagged) and skills, so the next run is better, `cmd/harness/daemon.go` (API + scheduler + Telegram under one shutdown).
 
 ### The pillars (assistant model)
 
