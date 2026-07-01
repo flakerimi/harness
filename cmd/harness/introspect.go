@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/flakerimi/harness/app"
@@ -82,8 +83,22 @@ func runMemory(args []string) {
 
 // runSkills lists the loaded Agent Skills (SKILL.md folders) — the procedural
 // know-how available to agents via progressive disclosure. The active identity's
-// own learned-skills dir is included.
+// own learned-skills dir is included. Subcommands reach the git-backed registry:
+//
+//	harness skills                 # list installed skills (default)
+//	harness skills search <query>  # find skills in the registry
+//	harness skills add <name>      # install one into the shared skills dir
 func runSkills(args []string) {
+	if len(args) > 0 {
+		switch args[0] {
+		case "search":
+			runSkillsSearch(args[1:])
+			return
+		case "add", "install":
+			runSkillsAdd(args[1:])
+			return
+		}
+	}
 	fs := flag.NewFlagSet("skills", flag.ExitOnError)
 	profileFlag := fs.String("profile", "", "identity profile (default from config)")
 	_ = fs.Parse(args)
@@ -108,6 +123,76 @@ func runSkills(args []string) {
 	for _, e := range errs {
 		fmt.Fprintln(os.Stderr, "warning:", e)
 	}
+}
+
+// runSkillsSearch queries the configured registry and prints matching skills.
+func runSkillsSearch(args []string) {
+	fs := flag.NewFlagSet("skills search", flag.ExitOnError)
+	refresh := fs.Bool("refresh", false, "pull the latest registry before searching")
+	_ = fs.Parse(args)
+
+	src, err := skillsRegistry(*refresh)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	entries, err := src.Search(context.Background(), strings.Join(fs.Args(), " "))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	if len(entries) == 0 {
+		fmt.Println("(no matching skills)")
+		return
+	}
+	for _, e := range entries {
+		fmt.Printf("%-16s %s\n", e.Name, e.Description)
+	}
+	fmt.Fprintf(os.Stderr, "\n%d skill(s) — install with: harness skills add <name>\n", len(entries))
+}
+
+// runSkillsAdd installs a registry skill into the shared skills dir (or a
+// profile's own with -profile), where the loader then discovers it.
+func runSkillsAdd(args []string) {
+	fs := flag.NewFlagSet("skills add", flag.ExitOnError)
+	profileFlag := fs.String("profile", "", "install into this identity's skills dir instead of the shared one")
+	refresh := fs.Bool("refresh", false, "pull the latest registry before installing")
+	_ = fs.Parse(args)
+
+	name := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	if name == "" {
+		fmt.Fprintln(os.Stderr, "usage: harness skills add [-profile <name>] <skill>")
+		os.Exit(2)
+	}
+	src, err := skillsRegistry(*refresh)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	dst := skill.UserSkillsDir()
+	if *profileFlag != "" {
+		dst = profile.SkillsDir(*profileFlag)
+	}
+	s, err := src.Install(context.Background(), name, dst)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	fmt.Printf("installed %s → %s\n", s.Name, filepath.Join(dst, s.Name))
+	fmt.Printf("    %s\n", s.Description)
+}
+
+// skillsRegistry builds the git-backed skills registry from config, erroring
+// clearly when none is set.
+func skillsRegistry(refresh bool) (skill.Source, error) {
+	cfg, _ := config.Load()
+	url := cfg.SkillsRegistry()
+	if url == "" {
+		return nil, fmt.Errorf("no skills registry configured — set skills.registry (a git repo URL) in %s, or $HARNESS_SKILLS_REGISTRY", config.Path())
+	}
+	gs := skill.NewGitSource(url)
+	gs.Refresh = refresh
+	return gs, nil
 }
 
 // runProfiles lists the available agent profiles (built-in + file-based) — the

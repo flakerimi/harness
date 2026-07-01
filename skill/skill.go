@@ -40,6 +40,19 @@ func Dirs() []string {
 	return dirs
 }
 
+// UserSkillsDir is the writable shared skills directory where the registry
+// installs skills — one of the dirs Load scans: $HARNESS_SKILLS_DIR, else
+// <user-config-dir>/harness/skills.
+func UserSkillsDir() string {
+	if d := os.Getenv("HARNESS_SKILLS_DIR"); d != "" {
+		return d
+	}
+	if ucd, err := os.UserConfigDir(); err == nil {
+		return filepath.Join(ucd, "harness", "skills")
+	}
+	return "skills"
+}
+
 // Load scans the skill dirs (extraDirs first — e.g. a profile's learned skills —
 // then the shared dirs) for <skill>/SKILL.md files. The first skill found for a
 // given name wins, so a profile's skills take precedence.

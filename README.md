@@ -107,6 +107,8 @@ harness channel telegram ...  # reach the assistant from Telegram
 harness schedule add ...      # proactive scheduled tasks
 harness profiles              # list identities
 harness skills                # list skills (incl. the identity's learned ones)
+harness skills search <q>     # find skills in the git registry
+harness skills add <name>     # install one from the registry
 harness memory                # what the identity remembers
 harness sessions              # list stored conversations
 harness login [-provider claude]   # model-provider OAuth
@@ -248,6 +250,11 @@ The harness has four pluggable layers, all file-based and per-identity scopable:
 disclosure: names + descriptions go in the system prompt; the model calls
 `load_skill` to pull full instructions only when a task matches. An identity can
 also `learn_skill` — saving a workflow it worked out, reusable by name next time.
+Skills can also come from a shared **registry** — a git repo of skill folders.
+Point `skills.registry` (in config, or `$HARNESS_SKILLS_REGISTRY`) at the repo,
+then `harness skills search <q>` browses it and `harness skills add <name>`
+installs a skill into the shared skills dir (`-profile` for one identity's own).
+The clone is cached and only refreshed with `-refresh`.
 
 **Specialists** are separate agent runs with their own persona, model tier, and
 tool subset. The orchestrator dispatches a focused task to one by name
@@ -269,10 +276,10 @@ is a *recipe*; a specialist is a *separate worker*.
 
 ## Status
 
-The engine plus all six pillars: identities, memory, skills (+ self-learning),
-sessions, compaction, scheduling, an HTTP/SSE server, and a Telegram channel.
-Provider adapters for mock, Anthropic (API key + OAuth), and OpenAI-compatible
-(OpenAI, DeepSeek, Gemini, Ollama, LM Studio). Connectors: native tools, MCP,
-and Google Calendar + Gmail (read).
+The engine plus all six pillars: identities, memory, skills (+ self-learning
+and a git-backed registry), sessions, compaction, scheduling, an HTTP/SSE
+server, and a Telegram channel. Provider adapters for mock, Anthropic (API key +
+OAuth), and OpenAI-compatible (OpenAI, DeepSeek, Gemini, Ollama, LM Studio).
+Connectors: native tools, MCP, and Google Calendar + Gmail (read).
 
-Next: more channels (Slack), Gmail send/draft, and pulling skills from a registry.
+Next: more channels (Slack), and Gmail send/draft.

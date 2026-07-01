@@ -14,6 +14,7 @@ import (
 type Config struct {
 	Search SearchConfig `json:"search"`
 	Google GoogleConfig `json:"google"`
+	Skills SkillsConfig `json:"skills"`
 
 	// DefaultProfile is the identity profile used when -profile is not passed
 	// (e.g. "personal"). Env HARNESS_PROFILE overrides.
@@ -45,6 +46,21 @@ func (c Config) Profile() string {
 		return v
 	}
 	return c.DefaultProfile
+}
+
+// SkillsConfig configures the skills registry — a git repo of skill folders
+// that `harness skills search` / `add` install from.
+type SkillsConfig struct {
+	Registry string `json:"registry,omitempty"` // git URL of the skills repo
+}
+
+// SkillsRegistry resolves the skills registry git URL: env
+// HARNESS_SKILLS_REGISTRY overrides the config value.
+func (c Config) SkillsRegistry() string {
+	if v := os.Getenv("HARNESS_SKILLS_REGISTRY"); v != "" {
+		return v
+	}
+	return c.Skills.Registry
 }
 
 // SearchConfig configures the web_search backend.
