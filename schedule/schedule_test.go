@@ -105,6 +105,18 @@ func TestStoreAddListRemove(t *testing.T) {
 	}
 }
 
+func TestStoreDeliverPersists(t *testing.T) {
+	st := NewStore(t.TempDir())
+	now := time.Date(2026, 6, 17, 6, 0, 0, 0, time.UTC)
+	if _, err := st.Add(Task{Profile: "personal", Prompt: "resurface a note", Spec: "daily 09:00", Deliver: "telegram:4242"}, now); err != nil {
+		t.Fatal(err)
+	}
+	tasks, _ := st.Load()
+	if len(tasks) != 1 || tasks[0].Deliver != "telegram:4242" {
+		t.Errorf("deliver target not persisted: %+v", tasks)
+	}
+}
+
 func TestDueAndMarkRan(t *testing.T) {
 	st := NewStore(t.TempDir())
 	create := time.Date(2026, 6, 17, 6, 0, 0, 0, time.UTC)

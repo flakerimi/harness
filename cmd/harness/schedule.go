@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/flakerimi/harness/app"
+	"github.com/flakerimi/harness/channel/telegram"
 	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/schedule"
 )
@@ -50,11 +52,12 @@ func scheduleAdd(store *schedule.Store, args []string) {
 	spec := fs.String("spec", "", "schedule: 'every 30m' | 'daily 08:00' | 'weekly mon 09:00'")
 	id := fs.String("id", "", "optional task id (auto-assigned if empty)")
 	providerSlug := fs.String("provider", "mock", "model provider to run this task with")
+	deliver := fs.String("deliver", "", "send output to a channel, e.g. telegram:<chatID> (default: stdout only)")
 	_ = fs.Parse(args)
 
 	prompt := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if *spec == "" || prompt == "" {
-		fmt.Fprintln(os.Stderr, "usage: harness schedule add -spec <spec> [-profile p] [-provider claude] [-id name] <prompt>")
+		fmt.Fprintln(os.Stderr, "usage: harness schedule add -spec <spec> [-profile p] [-provider claude] [-deliver telegram:<id>] [-id name] <prompt>")
 		os.Exit(2)
 	}
 	prof := *profileFlag
@@ -67,6 +70,7 @@ func scheduleAdd(store *schedule.Store, args []string) {
 		Provider: *providerSlug,
 		Prompt:   prompt,
 		Spec:     *spec,
+		Deliver:  *deliver,
 	}, time.Now())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -200,7 +204,9 @@ func runDueOnce(ctx context.Context, store *schedule.Store, now time.Time) int {
 }
 
 // runScheduledTask builds the task's identity and runs its prompt once,
-// streaming the result to stdout (so a system cron captures it).
+// streaming the result to stdout (so a system cron captures it). When the task
+// has a Deliver target, the assistant's text is also sent to that channel — the
+// wire that turns a scheduled run into a proactive message on your phone.
 func runScheduledTask(ctx context.Context, t schedule.Task) {
 	provSlug := t.Provider
 	if provSlug == "" {
@@ -222,8 +228,53 @@ func runScheduledTask(ctx context.Context, t schedule.Task) {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return
 	}
-	if err := ag.Run(ctx, t.Prompt, &cliHandler{}); err != nil {
+	h := &captureHandler{}
+	if err := ag.Run(ctx, t.Prompt, h); err != nil {
 		fmt.Fprintln(os.Stderr, "\nerror:", err)
 	}
 	fmt.Println()
+	if t.Deliver != "" {
+		if err := deliver(ctx, t.Deliver, strings.TrimSpace(h.text.String())); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: deliver:", err)
+		}
+	}
+}
+
+// captureHandler renders the run to the terminal like cliHandler but also
+// accumulates the assistant's text, so a scheduled task can forward it to a
+// delivery channel.
+type captureHandler struct {
+	cliHandler
+	text strings.Builder
+}
+
+func (h *captureHandler) OnText(delta string) {
+	h.cliHandler.OnText(delta)
+	h.text.WriteString(delta)
+}
+
+// deliver sends a scheduled task's output to a channel target of the form
+// "kind:dest" — today only "telegram:<chatID>". Empty text is a no-op.
+func deliver(ctx context.Context, target, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	kind, dest, ok := strings.Cut(target, ":")
+	if !ok || dest == "" {
+		return fmt.Errorf("bad deliver target %q (want kind:dest, e.g. telegram:12345)", target)
+	}
+	switch kind {
+	case "telegram":
+		tok := os.Getenv("TELEGRAM_BOT_TOKEN")
+		if tok == "" {
+			return fmt.Errorf("telegram delivery needs $TELEGRAM_BOT_TOKEN")
+		}
+		chatID, err := strconv.ParseInt(dest, 10, 64)
+		if err != nil {
+			return fmt.Errorf("telegram chat id %q: %w", dest, err)
+		}
+		return telegram.New(tok).Send(ctx, chatID, text)
+	default:
+		return fmt.Errorf("unknown deliver kind %q (supported: telegram)", kind)
+	}
 }

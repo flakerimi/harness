@@ -223,8 +223,10 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		}
 		toolReg.Register(memory.NewRememberTool(memStore))
 		// recall lets the agent search the rest of memory on demand, so the
-		// injected digest can stay small as the store grows.
+		// injected digest can stay small as the store grows; resurface picks an
+		// aging note to revisit, for proactive scheduled check-ins.
 		toolReg.Register(memory.NewRecallTool(memStore))
+		toolReg.Register(memory.NewResurfaceTool(memStore, 0))
 
 		// Self-improvement: let the identity write new skills it works out into
 		// its own skills dir, so the procedure is reusable by name next time.

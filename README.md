@@ -16,7 +16,7 @@ a **schedule**, and improves itself.
 | Pillar | What it is | Where |
 |---|---|---|
 | **Soul** | identities — persona + routing tier + delegation | `profile/`, `harness profiles` |
-| **Memory** | per-identity durable facts: a bounded digest is injected, `remember` saves, `recall` searches the rest | `memory/`, `harness memory` |
+| **Memory** | per-identity second brain: a bounded digest is injected, `remember` saves (with tags), `recall` searches, `resurface` revisits aging notes | `memory/`, `harness memory` |
 | **Skills** | SKILL.md workflows (agentskills.io format), progressive disclosure | `skill/`, `harness skills` |
 | **Self-improvement** | the agent writes its own skills via `learn_skill` | `skill/` |
 | **Sessions** | multi-turn conversations that persist across runs | `session/`, `harness chat` |
@@ -136,12 +136,17 @@ the on-disk session keeps full fidelity.
 ```sh
 harness schedule add -profile work -provider claude -spec "daily 08:00" "brief me on my day"
 harness schedule add -spec "every 2h" "check my inbox and flag anything urgent"
+harness schedule add -profile personal -provider claude -spec "daily 09:00" \
+  -deliver telegram:<chatID> "resurface a memory worth revisiting, as a warm one-liner"
 harness schedule list
 harness schedule run-due        # fire what's due (wire to system cron/launchd)
 harness schedule daemon         # or keep a process checking every minute
 ```
 
-Specs: `every 30m` · `every 1d` · `daily 08:00` · `weekly mon 09:00`.
+Specs: `every 30m` · `every 1d` · `daily 08:00` · `weekly mon 09:00`. A task's
+output streams to stdout by default; `-deliver telegram:<chatID>` (with
+`$TELEGRAM_BOT_TOKEN` set) also pushes it to your phone — the wire that turns a
+scheduled run into a proactive message.
 
 ### Daemon — one background process
 

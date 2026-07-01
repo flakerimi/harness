@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Memory is one stored fact.
@@ -18,6 +19,7 @@ type Memory struct {
 	Name    string
 	Content string
 	Path    string
+	Updated time.Time // file mtime — when it was last written or surfaced
 }
 
 // Store reads and writes a profile's memory directory.
@@ -47,11 +49,15 @@ func (s *Store) Load() ([]Memory, error) {
 		if content == "" {
 			continue
 		}
-		out = append(out, Memory{
+		m := Memory{
 			Name:    strings.TrimSuffix(filepath.Base(p), ".md"),
 			Content: content,
 			Path:    p,
-		})
+		}
+		if fi, err := os.Stat(p); err == nil {
+			m.Updated = fi.ModTime()
+		}
+		out = append(out, m)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil

@@ -37,11 +37,11 @@ The design is a stack of narrow seams. Read these packages in order to understan
 
 5. **`app/app.go`** — **the composition root**. `app.Build(ctx, Spec)` wires provider + connectors/tools + skills + routing + profile (persona/delegation) + specialists + memory into a ready agent. If you add a capability that should reach every surface, wire it here. Surfaces stay thin.
 
-6. **Surfaces** — `cmd/harness/` (CLI subcommand dispatch in `main.go`), `server/` (HTTP+SSE: `POST /v1/chat`, `GET /v1/sessions`, `/healthz`), `channel/telegram/`, `schedule/` (proactive cron-like runs), `cmd/harness/daemon.go` (API + scheduler + Telegram under one shutdown).
+6. **Surfaces** — `cmd/harness/` (CLI subcommand dispatch in `main.go`), `server/` (HTTP+SSE: `POST /v1/chat`, `GET /v1/sessions`, `/healthz`), `channel/telegram/`, `schedule/` (proactive cron-like runs; a task's `Deliver` target like `telegram:<chatID>` pushes its output to a channel — see `deliver` in `cmd/harness/schedule.go`), `cmd/harness/daemon.go` (API + scheduler + Telegram under one shutdown).
 
 ### The pillars (assistant model)
 
-`profile/` identities (persona + base tier + delegation), `memory/` durable facts (a bounded `Digest` is injected into the system prompt; `remember` saves, `recall` keyword-searches the rest so a large store stays reachable without bloating every turn — see `memory/search.go`), `skill/` SKILL.md workflows surfaced by progressive disclosure (`load_skill`; an identity can `learn_skill` to write its own), `subagent/` specialists dispatched via `dispatch`, `session/` persisted multi-turn conversations, `connector/` integration layer (native, MCP, Google Calendar/Gmail).
+`profile/` identities (persona + base tier + delegation), `memory/` a per-identity second brain (a bounded `Digest` is injected into the system prompt; `remember` saves — optional tags ride in the body so they're searchable; `recall` keyword-searches the rest — `memory/search.go`; `resurface` picks an aging note via mtime-LRU rotation for proactive scheduled check-ins — `memory/resurface.go`), `skill/` SKILL.md workflows surfaced by progressive disclosure (`load_skill`; an identity can `learn_skill` to write its own), `subagent/` specialists dispatched via `dispatch`, `session/` persisted multi-turn conversations, `connector/` integration layer (native, MCP, Google Calendar/Gmail).
 
 ## Conventions that matter here
 

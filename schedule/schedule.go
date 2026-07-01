@@ -24,6 +24,7 @@ type Task struct {
 	Provider string    `json:"provider,omitempty"` // model provider slug; empty → caller default
 	Prompt   string    `json:"prompt"`
 	Spec     string    `json:"spec"`
+	Deliver  string    `json:"deliver,omitempty"` // where to send output, e.g. "telegram:<chatID>"; empty → stdout only
 	Enabled  bool      `json:"enabled"`
 	Created  time.Time `json:"created"`
 	LastRun  time.Time `json:"last_run,omitzero"`

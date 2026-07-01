@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/flakerimi/harness/tool"
 )
@@ -27,6 +28,7 @@ func (RememberTool) Spec() tool.Spec {
 			"properties": map[string]any{
 				"content": map[string]any{"type": "string", "description": "The fact to remember, as a self-contained sentence."},
 				"name":    map[string]any{"type": "string", "description": "Optional short name/slug for this memory."},
+				"tags":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional labels to categorize this memory (e.g. idea, link, person, project)."},
 			},
 			"required": []string{"content"},
 		},
@@ -35,17 +37,61 @@ func (RememberTool) Spec() tool.Spec {
 
 func (t *RememberTool) Run(_ context.Context, input json.RawMessage, _ *tool.Env) (tool.Result, error) {
 	var args struct {
-		Content string `json:"content"`
-		Name    string `json:"name"`
+		Content string   `json:"content"`
+		Name    string   `json:"name"`
+		Tags    []string `json:"tags"`
 	}
 	if err := json.Unmarshal(input, &args); err != nil {
 		return tool.Result{Content: "invalid input: " + err.Error(), IsError: true}, nil
 	}
-	path, err := t.store.Save(args.Name, args.Content)
+	// Tags ride along in the body so they're searchable by recall with no
+	// separate index or file-format change.
+	content := args.Content
+	if len(args.Tags) > 0 {
+		content = strings.TrimRight(content, "\n") + "\n\nTags: " + strings.Join(args.Tags, ", ")
+	}
+	path, err := t.store.Save(args.Name, content)
 	if err != nil {
 		return tool.Result{Content: err.Error(), IsError: true}, nil
 	}
 	return tool.Result{Content: "remembered (" + filepath.Base(path) + ")"}, nil
+}
+
+// ResurfaceTool surfaces a memory worth proactively revisiting — the engine of
+// the "resurface when relevant" loop for scheduled, unprompted check-ins. It
+// returns an aging note and rotates it to the back of the queue, so a run works
+// through the whole store over time rather than repeating one item.
+type ResurfaceTool struct {
+	store  *Store
+	minAge time.Duration
+}
+
+// NewResurfaceTool builds the resurface tool. minAge is how old a memory must be
+// before it's eligible (so fresh captures aren't parroted straight back); a
+// value <= 0 uses 24h.
+func NewResurfaceTool(store *Store, minAge time.Duration) *ResurfaceTool {
+	if minAge <= 0 {
+		minAge = 24 * time.Hour
+	}
+	return &ResurfaceTool{store: store, minAge: minAge}
+}
+
+func (ResurfaceTool) Spec() tool.Spec {
+	return tool.Spec{
+		Name:        "resurface",
+		Description: "Pick one saved memory worth proactively revisiting right now — for a check-in, reflection, or gentle nudge. Returns an aging note (and rotates it so you don't repeat it), or 'nothing to resurface' when there's nothing suitable.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+	}
+}
+
+func (t *ResurfaceTool) Run(_ context.Context, _ json.RawMessage, _ *tool.Env) (tool.Result, error) {
+	now := time.Now()
+	m, ok := t.store.Resurface(t.minAge, now)
+	if !ok {
+		return tool.Result{Content: "nothing to resurface"}, nil
+	}
+	_ = t.store.Touch(m.Name, now) // rotate to the back; best-effort
+	return tool.Result{Content: fmt.Sprintf("%s: %s", m.Name, oneLine(m.Content))}, nil
 }
 
 // RecallTool searches the profile's stored memories for ones relevant to a
