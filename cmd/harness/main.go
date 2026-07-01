@@ -22,6 +22,11 @@ import (
 )
 
 func main() {
+	// Load .env (./.env, then <user-config>/harness/.env) before anything reads
+	// the environment, so secrets like TELEGRAM_BOT_TOKEN / API keys can live in a
+	// file. Real env vars still take precedence.
+	config.LoadDotenv(config.DotenvPaths()...)
+
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "login":
