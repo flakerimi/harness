@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -91,8 +92,78 @@ func TestStatusAndToolsGate(t *testing.T) {
 	if !c.Status(context.Background()).Connected {
 		t.Error("should be connected after credentials saved")
 	}
-	if ts, _ := c.Tools(context.Background()); len(ts) != 4 {
-		t.Errorf("want 4 tools (calendar + gmail) after login, got %d", len(ts))
+	if ts, _ := c.Tools(context.Background()); len(ts) != 5 {
+		t.Errorf("want 5 tools (calendar + gmail read/draft) after login, got %d", len(ts))
+	}
+}
+
+func TestGmailDraftTool(t *testing.T) {
+	var gotPath, gotAuth string
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"draft-123","message":{"id":"m1","threadId":"t9"}}`))
+	}))
+	defer srv.Close()
+
+	c := connWithServer(t, srv.URL)
+	in, _ := json.Marshal(map[string]any{
+		"to":          "orjeta.r@tpr.al",
+		"subject":     "Re: TPRxCBRE | Meeting",
+		"body":        "Thanks — 16:00 works for me.",
+		"thread_id":   "t9",
+		"in_reply_to": "<abc@mail.gmail.com>",
+	})
+	res, err := (&gmailDraftTool{c: c}).Run(context.Background(), in, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError || !strings.Contains(res.Content, "draft-123") {
+		t.Fatalf("draft result = %q err=%v", res.Content, res.IsError)
+	}
+	if gotPath != "/gmail/v1/users/me/drafts" || gotAuth != "Bearer tok-access" {
+		t.Fatalf("unexpected request: path=%s auth=%s", gotPath, gotAuth)
+	}
+
+	// The posted payload must carry the thread id and a base64url raw message
+	// that decodes to the expected headers and body.
+	var payload struct {
+		Message struct {
+			Raw      string `json:"raw"`
+			ThreadID string `json:"threadId"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(gotBody, &payload); err != nil {
+		t.Fatalf("payload parse: %v", err)
+	}
+	if payload.Message.ThreadID != "t9" {
+		t.Errorf("thread id not sent, got %q", payload.Message.ThreadID)
+	}
+	rawMsg, err := base64.URLEncoding.DecodeString(payload.Message.Raw)
+	if err != nil {
+		t.Fatalf("raw not base64url: %v", err)
+	}
+	for _, want := range []string{
+		"To: orjeta.r@tpr.al",
+		"Subject: Re: TPRxCBRE | Meeting",
+		"In-Reply-To: <abc@mail.gmail.com>",
+		"References: <abc@mail.gmail.com>",
+		"Thanks — 16:00 works for me.",
+	} {
+		if !strings.Contains(string(rawMsg), want) {
+			t.Errorf("raw message missing %q:\n%s", want, rawMsg)
+		}
+	}
+}
+
+func TestGmailDraftValidation(t *testing.T) {
+	c := connWithServer(t, "http://unused.invalid")
+	in, _ := json.Marshal(map[string]any{"to": "", "subject": "s", "body": "b"})
+	res, _ := (&gmailDraftTool{c: c}).Run(context.Background(), in, nil)
+	if !res.IsError {
+		t.Error("missing 'to' should be a validation error before any request")
 	}
 }
 

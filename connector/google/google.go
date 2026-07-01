@@ -5,11 +5,13 @@
 package google
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -45,7 +47,7 @@ func (c *Connector) Status(context.Context) connector.Status {
 	if _, err := c.store.Load("google"); err != nil {
 		return connector.Status{Connected: false, Detail: "not logged in — run: harness login -provider google"}
 	}
-	return connector.Status{Connected: true, Detail: "calendar + gmail (read)"}
+	return connector.Status{Connected: true, Detail: "calendar + gmail (read + draft)"}
 }
 
 func (c *Connector) Tools(context.Context) ([]tool.Tool, error) {
@@ -59,6 +61,7 @@ func (c *Connector) Tools(context.Context) ([]tool.Tool, error) {
 		&calendarGetTool{c: c},
 		&gmailListTool{c: c},
 		&gmailGetTool{c: c},
+		&gmailDraftTool{c: c},
 	}, nil
 }
 
@@ -83,6 +86,32 @@ func (c *Connector) get(ctx context.Context, path string, q url.Values) ([]byte,
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("google %s: HTTP %d: %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return body, nil
+}
+
+// post sends a JSON body to a Google API path with the bearer token — the write
+// counterpart to get, used for creating Gmail drafts.
+func (c *Connector) post(ctx context.Context, path string, jsonBody []byte) ([]byte, error) {
+	tok, err := c.tokens.Token(ctx)
+	if err != nil {
+		return nil, err
+	}
+	u := strings.TrimRight(c.apiBase, "/") + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode/100 != 2 {
 		return nil, fmt.Errorf("google %s: HTTP %d: %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return body, nil
@@ -459,7 +488,13 @@ func (t *gmailGetTool) Run(ctx context.Context, input json.RawMessage, _ *tool.E
 		fmt.Fprintf(&b, "To: %s\n", to)
 	}
 	fmt.Fprintf(&b, "Date: %s\n", header(h, "Date"))
-	fmt.Fprintf(&b, "id: %s\n\n", msg.ID)
+	fmt.Fprintf(&b, "id: %s\n", msg.ID)
+	// Surface threading handles so a reply draft can attach to this thread.
+	fmt.Fprintf(&b, "thread_id: %s\n", msg.ThreadID)
+	if mid := header(h, "Message-ID"); mid != "" {
+		fmt.Fprintf(&b, "message_id: %s\n", mid)
+	}
+	b.WriteString("\n")
 
 	if text := findPlainText(msg.Payload); text != "" {
 		fmt.Fprint(&b, clipText(strings.TrimSpace(text), 4000))
@@ -475,4 +510,80 @@ func clipText(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// --- Gmail (draft) --------------------------------------------------------
+
+type gmailDraftTool struct{ c *Connector }
+
+func (gmailDraftTool) Spec() tool.Spec {
+	return tool.Spec{
+		Name:        "gmail_create_draft",
+		Description: "Create a Gmail draft. It is NOT sent — it waits in Drafts for the user to review and send. For a reply, pass thread_id and in_reply_to from gmail_get_message so it threads correctly (and keep the original subject with a 'Re: ' prefix).",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"to":          map[string]any{"type": "string", "description": "Recipient email address."},
+				"subject":     map[string]any{"type": "string", "description": "Subject line."},
+				"body":        map[string]any{"type": "string", "description": "Plain-text body of the draft."},
+				"thread_id":   map[string]any{"type": "string", "description": "Optional Gmail thread id (from gmail_get_message) to attach a reply to its thread."},
+				"in_reply_to": map[string]any{"type": "string", "description": "Optional Message-ID of the message being replied to, for correct threading."},
+			},
+			"required": []string{"to", "subject", "body"},
+		},
+	}
+}
+
+func (t *gmailDraftTool) Run(ctx context.Context, input json.RawMessage, _ *tool.Env) (tool.Result, error) {
+	var args struct {
+		To        string `json:"to"`
+		Subject   string `json:"subject"`
+		Body      string `json:"body"`
+		ThreadID  string `json:"thread_id"`
+		InReplyTo string `json:"in_reply_to"`
+	}
+	if err := json.Unmarshal(input, &args); err != nil {
+		return tool.Result{Content: "invalid input: " + err.Error(), IsError: true}, nil
+	}
+	if strings.TrimSpace(args.To) == "" || strings.TrimSpace(args.Subject) == "" || strings.TrimSpace(args.Body) == "" {
+		return tool.Result{Content: "to, subject, and body are all required", IsError: true}, nil
+	}
+
+	raw := base64.URLEncoding.EncodeToString([]byte(buildRawMessage(args.To, args.Subject, args.Body, args.InReplyTo)))
+	msg := map[string]any{"raw": raw}
+	if args.ThreadID != "" {
+		msg["threadId"] = args.ThreadID
+	}
+	payload, err := json.Marshal(map[string]any{"message": msg})
+	if err != nil {
+		return tool.Result{Content: err.Error(), IsError: true}, nil
+	}
+
+	body, err := t.c.post(ctx, "/gmail/v1/users/me/drafts", payload)
+	if err != nil {
+		return tool.Result{Content: err.Error(), IsError: true}, nil
+	}
+	var draft struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &draft)
+	return tool.Result{Content: fmt.Sprintf("created draft %s to %s — review and send it in Gmail", orDefault(draft.ID, "(saved)"), args.To)}, nil
+}
+
+// buildRawMessage assembles an RFC 2822 message for the Gmail drafts API. The
+// subject is MIME-encoded only when it isn't plain ASCII, so unicode subjects
+// survive; reply headers are added when in_reply_to is given.
+func buildRawMessage(to, subject, body, inReplyTo string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "To: %s\r\n", to)
+	fmt.Fprintf(&b, "Subject: %s\r\n", mime.QEncoding.Encode("utf-8", subject))
+	if inReplyTo != "" {
+		fmt.Fprintf(&b, "In-Reply-To: %s\r\n", inReplyTo)
+		fmt.Fprintf(&b, "References: %s\r\n", inReplyTo)
+	}
+	b.WriteString("MIME-Version: 1.0\r\n")
+	b.WriteString("Content-Type: text/plain; charset=\"UTF-8\"\r\n")
+	b.WriteString("\r\n")
+	b.WriteString(body)
+	return b.String()
 }

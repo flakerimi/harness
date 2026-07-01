@@ -17,14 +17,18 @@ const (
 	googleTokenURL = "https://oauth2.googleapis.com/token"
 )
 
-// GoogleDefaultScopes identify the user and grant read access to Calendar and
-// Gmail. Modeled on Construct's integration scopes; trimmed to read-only here.
+// GoogleDefaultScopes identify the user, grant read access to Calendar and
+// Gmail, and allow composing Gmail drafts (compose creates drafts and can send;
+// reading still needs gmail.readonly). Modeled on Construct's integration
+// scopes. Note: an account connected before compose was added must reconnect
+// (harness connect google) to grant it before drafting works.
 var GoogleDefaultScopes = []string{
 	"openid",
 	"https://www.googleapis.com/auth/userinfo.email",
 	"https://www.googleapis.com/auth/calendar.readonly",
 	"https://www.googleapis.com/auth/calendar.events.readonly",
 	"https://www.googleapis.com/auth/gmail.readonly",
+	"https://www.googleapis.com/auth/gmail.compose",
 }
 
 // GoogleLogin runs the Google OAuth flow (loopback redirect, PKCE, offline +

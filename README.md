@@ -138,6 +138,8 @@ harness schedule add -profile work -provider claude -spec "daily 08:00" "brief m
 harness schedule add -spec "every 2h" "check my inbox and flag anything urgent"
 harness schedule add -profile personal -provider claude -spec "daily 09:00" \
   -deliver telegram:<chatID> "resurface a memory worth revisiting, as a warm one-liner"
+harness schedule add -profile work -provider claude -spec "daily 07:00" \
+  -deliver telegram:<chatID> "run the chief-of-staff skill"   # morning brief → your phone
 harness schedule list
 harness schedule run-due        # fire what's due (wire to system cron/launchd)
 harness schedule daemon         # or keep a process checking every minute
@@ -286,6 +288,6 @@ The engine plus all six pillars: identities, memory, skills (+ self-learning
 and a git-backed registry), sessions, compaction, scheduling, an HTTP/SSE
 server, and a Telegram channel. Provider adapters for mock, Anthropic (API key +
 OAuth), and OpenAI-compatible (OpenAI, DeepSeek, Gemini, Ollama, LM Studio).
-Connectors: native tools, MCP, and Google Calendar + Gmail (read).
+Connectors: native tools, MCP, and Google Calendar + Gmail (read + draft).
 
-Next: more channels (Slack), and Gmail send/draft.
+Next: more channels (Slack), and Gmail send (drafting ships today).
