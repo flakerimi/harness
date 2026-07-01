@@ -55,6 +55,11 @@ func runAgents(args []string) {
 
 // runMemory lists the active identity's durable memories.
 func runMemory(args []string) {
+	// Optional subcommand: harness memory search [-profile p] <query>
+	searchMode := false
+	if len(args) > 0 && args[0] == "search" {
+		searchMode, args = true, args[1:]
+	}
 	fs := flag.NewFlagSet("memory", flag.ExitOnError)
 	profileFlag := fs.String("profile", "", "identity profile (default from config)")
 	_ = fs.Parse(args)
@@ -63,6 +68,28 @@ func runMemory(args []string) {
 		name = activeProfile()
 	}
 	store := memory.NewStore(profile.MemoryDir(name))
+
+	if searchMode {
+		query := strings.TrimSpace(strings.Join(fs.Args(), " "))
+		if query == "" {
+			fmt.Fprintln(os.Stderr, "usage: harness memory search [-profile <name>] <query>")
+			os.Exit(2)
+		}
+		hits, err := store.Search(query, 0)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		if len(hits) == 0 {
+			fmt.Println("(no matching memories)")
+			return
+		}
+		for _, m := range hits {
+			fmt.Printf("- %s: %s\n", m.Name, m.Content)
+		}
+		return
+	}
+
 	mems, err := store.Load()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

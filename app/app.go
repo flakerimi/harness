@@ -43,6 +43,11 @@ type Spec struct {
 	Compact   int // summarizing-compaction token budget; 0 disables
 }
 
+// memDigestCap bounds how many memories are injected into the system prompt;
+// the rest stay reachable through the recall tool, so a growing memory store
+// doesn't bloat every turn.
+const memDigestCap = 24
+
 // Build assembles a ready-to-run agent from a Spec.
 func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 	// Resolve provider credentials/endpoint from config (env still overrides),
@@ -210,13 +215,16 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		if merr != nil {
 			fmt.Fprintln(os.Stderr, "warning: memory:", merr)
 		}
-		if mc := memory.Context(mems); mc != "" {
+		if mc := memory.Digest(mems, memDigestCap); mc != "" {
 			if opts.System != "" {
 				opts.System += "\n\n"
 			}
 			opts.System += mc
 		}
 		toolReg.Register(memory.NewRememberTool(memStore))
+		// recall lets the agent search the rest of memory on demand, so the
+		// injected digest can stay small as the store grows.
+		toolReg.Register(memory.NewRecallTool(memStore))
 
 		// Self-improvement: let the identity write new skills it works out into
 		// its own skills dir, so the procedure is reusable by name next time.

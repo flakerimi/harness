@@ -16,7 +16,7 @@ a **schedule**, and improves itself.
 | Pillar | What it is | Where |
 |---|---|---|
 | **Soul** | identities — persona + routing tier + delegation | `profile/`, `harness profiles` |
-| **Memory** | per-identity durable facts, injected + a `remember` tool | `memory/`, `harness memory` |
+| **Memory** | per-identity durable facts: a bounded digest is injected, `remember` saves, `recall` searches the rest | `memory/`, `harness memory` |
 | **Skills** | SKILL.md workflows (agentskills.io format), progressive disclosure | `skill/`, `harness skills` |
 | **Self-improvement** | the agent writes its own skills via `learn_skill` | `skill/` |
 | **Sessions** | multi-turn conversations that persist across runs | `session/`, `harness chat` |
@@ -110,6 +110,7 @@ harness skills                # list skills (incl. the identity's learned ones)
 harness skills search <q>     # find skills in the git registry
 harness skills add <name>     # install one from the registry
 harness memory                # what the identity remembers
+harness memory search <q>     # search that identity's memory
 harness sessions              # list stored conversations
 harness login [-provider claude]   # model-provider OAuth
 harness connect google             # integration OAuth (Calendar)

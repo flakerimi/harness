@@ -41,7 +41,7 @@ The design is a stack of narrow seams. Read these packages in order to understan
 
 ### The pillars (assistant model)
 
-`profile/` identities (persona + base tier + delegation), `memory/` durable facts (injected into the system prompt + a `remember` tool), `skill/` SKILL.md workflows surfaced by progressive disclosure (`load_skill`; an identity can `learn_skill` to write its own), `subagent/` specialists dispatched via `dispatch`, `session/` persisted multi-turn conversations, `connector/` integration layer (native, MCP, Google Calendar/Gmail).
+`profile/` identities (persona + base tier + delegation), `memory/` durable facts (a bounded `Digest` is injected into the system prompt; `remember` saves, `recall` keyword-searches the rest so a large store stays reachable without bloating every turn — see `memory/search.go`), `skill/` SKILL.md workflows surfaced by progressive disclosure (`load_skill`; an identity can `learn_skill` to write its own), `subagent/` specialists dispatched via `dispatch`, `session/` persisted multi-turn conversations, `connector/` integration layer (native, MCP, Google Calendar/Gmail).
 
 ## Conventions that matter here
 

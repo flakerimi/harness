@@ -82,17 +82,30 @@ func (s *Store) Save(name, content string) (string, error) {
 	return path, nil
 }
 
-// Context renders memories for injection into the system prompt, plus a nudge
-// to keep memory up to date. Empty when there are no memories — but the nudge
-// is still useful, so callers may inject it regardless via Instruction.
-func Context(mems []Memory) string {
+// Context renders every memory for injection into the system prompt, plus the
+// remember nudge. Kept for callers that want the full set; Digest bounds it.
+func Context(mems []Memory) string { return Digest(mems, 0) }
+
+// Digest renders up to max memories (max <= 0 = all) for injection into the
+// system prompt, plus the remember nudge. When the store holds more than max,
+// it injects the first max and notes that the rest are searchable via the
+// recall tool — so a large second-brain memory doesn't bloat every prompt while
+// staying fully reachable on demand. Empty memories yield just the Instruction.
+func Digest(mems []Memory, max int) string {
 	if len(mems) == 0 {
 		return Instruction
 	}
+	shown, extra := mems, 0
+	if max > 0 && len(mems) > max {
+		shown, extra = mems[:max], len(mems)-max
+	}
 	var b strings.Builder
 	b.WriteString("## What you remember about the user\n")
-	for _, m := range mems {
+	for _, m := range shown {
 		fmt.Fprintf(&b, "- %s\n", oneLine(m.Content))
+	}
+	if extra > 0 {
+		fmt.Fprintf(&b, "- …and %d more — use the recall tool to search them.\n", extra)
 	}
 	b.WriteString("\n")
 	b.WriteString(Instruction)
