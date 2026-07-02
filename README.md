@@ -179,7 +179,7 @@ TOKEN=…   # from startup, or -token / $HARNESS_API_TOKEN
 curl -s  -H "Authorization: Bearer $TOKEN" localhost:8080/v1/profiles
 curl -s  -H "Authorization: Bearer $TOKEN" localhost:8080/v1/models
 curl -sN -H "Authorization: Bearer $TOKEN" -X POST localhost:8080/v1/chat \
-     -d '{"profile":"basecode","session":"web1","message":"hi","provider":"kimi"}'
+     -d '{"profile":"business","session":"web1","message":"hi","provider":"kimi"}'
 ```
 
 | Endpoint | What |
@@ -220,13 +220,13 @@ has memory across messages.
 
 A profile is *who the assistant is for* — and each identity is fully scoped: its
 own connected accounts, memory, skills, sessions, and tools, isolated from the
-others. So "Flak personally" and "Flak at Basecode" are different identities with
+others. So "you personally" and "you at work" are different identities with
 different email, calendar, and tools.
 
 ```sh
-harness profiles                                  # personal, work, basecode, …
-harness connect google -profile basecode          # connect the Basecode email/calendar to that identity
-harness chat -profile basecode                     # talk to the business identity
+harness profiles                                  # personal, work, business, …
+harness connect google -profile business          # connect the work email/calendar to that identity
+harness chat -profile business                     # talk to the business identity
 harness -profile personal "what's on my calendar"  # uses the personal account
 ```
 
@@ -288,7 +288,12 @@ is a *recipe*; a specialist is a *separate worker*.
 The engine plus all six pillars: identities, memory, skills (+ self-learning
 and a git-backed registry), sessions, compaction, scheduling, an HTTP/SSE
 server, and a Telegram channel. Provider adapters for mock, Anthropic (API key +
-OAuth), and OpenAI-compatible (OpenAI, DeepSeek, Gemini, Ollama, LM Studio).
+OAuth), and OpenAI-compatible (OpenAI, DeepSeek, Gemini, Kimi, Mistral, Qwen,
+OpenRouter, Fireworks, Together, xAI, Z.ai, MiMo, Apple, Ollama, LM Studio).
 Connectors: native tools, MCP, and Google Calendar + Gmail (read + draft + send).
 
-Next: more channels (Slack), and Gmail send (drafting ships today).
+Next: more channels (Slack).
+
+## License
+
+[MIT](LICENSE)

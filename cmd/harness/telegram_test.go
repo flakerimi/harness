@@ -86,7 +86,7 @@ func TestTelegramCommandValidationAndOthers(t *testing.T) {
 		t.Errorf("/help should document commands: %q", reply)
 	}
 	// Group-mention form /model@bot is normalized.
-	if reply, isCmd := telegramCommand(store, sess, "/models@flaksbitch_bot", "claude", "personal"); !isCmd || !strings.Contains(reply, "Providers") {
+	if reply, isCmd := telegramCommand(store, sess, "/models@example_bot", "claude", "personal"); !isCmd || !strings.Contains(reply, "Providers") {
 		t.Errorf("/models@bot should work: %q", reply)
 	}
 

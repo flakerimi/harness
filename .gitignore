@@ -23,3 +23,7 @@ harness.json
 *.swp
 .idea/
 .vscode/
+
+# Stray bp init artifacts (local only)
+Dockerfile
+basepod.yaml

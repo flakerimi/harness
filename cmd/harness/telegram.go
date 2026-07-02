@@ -116,7 +116,7 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 
 	// Advertise the slash commands in Telegram's "/" menu / autocomplete.
 	if err := bot.SetCommands(ctx, []telegram.Command{
-		{Command: "profile", Description: "Switch identity: /profile <name> (e.g. basecode)"},
+		{Command: "profile", Description: "Switch identity: /profile <name> (e.g. business)"},
 		{Command: "profiles", Description: "List identities and show the current one"},
 		{Command: "model", Description: "Switch model: /model <provider> [model]"},
 		{Command: "models", Description: "Pick a provider/model from a menu"},
@@ -317,8 +317,8 @@ func telegramCommand(store *session.Store, sess *session.Session, text, defProvi
 
 	switch cmd {
 	case "start", "help":
-		return "I'm Morpheus, your assistant. Just talk to me normally. Commands:\n" +
-			"/profile <name> — switch identity (e.g. basecode)\n" +
+		return "I'm your assistant. Just talk to me normally. Commands:\n" +
+			"/profile <name> — switch identity (e.g. business)\n" +
 			"/profiles — list identities\n" +
 			"/model <provider> [model] — switch model (e.g. /model kimi)\n" +
 			"/models — pick from a menu\n" +
