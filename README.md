@@ -1,5 +1,9 @@
 # harness
 
+[![ci](https://github.com/flakerimi/harness/actions/workflows/ci.yml/badge.svg)](https://github.com/flakerimi/harness/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/flakerimi/harness.svg)](https://pkg.go.dev/github.com/flakerimi/harness)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A multi-provider **agent harness** in Go — a personal/company assistant engine
 built from the standard library, no vendor SDK, one static binary. The agent
 loop is provider-agnostic: Claude, OpenAI, DeepSeek, Gemini, Ollama, or any
@@ -59,6 +63,14 @@ auth/       OAuth (Anthropic PKCE, Google) + token store
 config/     config.json (search, Google client, default profile)
 cmd/harness/ thin reference CLI built on the library
 ```
+
+## Install
+
+```sh
+go install github.com/flakerimi/harness/cmd/harness@latest
+```
+
+Or build from a checkout: `go build ./cmd/harness` (Go 1.26+, no dependencies).
 
 ## Run
 
@@ -293,6 +305,11 @@ OpenRouter, Fireworks, Together, xAI, Z.ai, MiMo, Apple, Ollama, LM Studio).
 Connectors: native tools, MCP, and Google Calendar + Gmail (read + draft + send).
 
 Next: more channels (Slack).
+
+## Contributing
+
+Small, dependency-free, offline-testable — see [CONTRIBUTING.md](CONTRIBUTING.md)
+for the ground rules before opening a PR.
 
 ## License
 
