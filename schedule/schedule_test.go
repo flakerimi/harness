@@ -63,9 +63,69 @@ func TestNextRunWeekly(t *testing.T) {
 
 func TestNextRunErrors(t *testing.T) {
 	base := time.Now()
-	for _, spec := range []string{"", "every", "every 0m", "daily 25:00", "weekly xx 09:00", "nonsense"} {
+	for _, spec := range []string{"", "every", "every 0m", "daily 25:00", "weekly xx 09:00", "nonsense", "once", "once 25:61", "in", "in -2h"} {
 		if _, err := NextRun(spec, base); err == nil {
 			t.Errorf("spec %q should error", spec)
+		}
+	}
+}
+
+func TestNextRunOneShots(t *testing.T) {
+	base := time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)
+
+	got, err := NextRun("in 2h", base)
+	if err != nil || !got.Equal(base.Add(2*time.Hour)) {
+		t.Errorf("in 2h = %v, %v", got, err)
+	}
+	// 10:00 now: once 09:00 → tomorrow 09:00; once 15:04 → today 15:04.
+	got, _ = NextRun("once 09:00", base)
+	if want := time.Date(2026, 6, 18, 9, 0, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("once 09:00 = %v, want %v", got, want)
+	}
+	got, _ = NextRun("once 15:04", base)
+	if want := time.Date(2026, 6, 17, 15, 4, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("once 15:04 = %v, want %v", got, want)
+	}
+
+	for spec, want := range map[string]bool{"in 2h": true, "once 09:00": true, "ONCE 09:00": true, "daily 08:00": false, "every 30m": false} {
+		if Once(spec) != want {
+			t.Errorf("Once(%q) = %v, want %v", spec, !want, want)
+		}
+	}
+}
+
+func TestMarkRanRetiresOneShots(t *testing.T) {
+	st := NewStore(t.TempDir())
+	now := time.Date(2026, 6, 17, 6, 0, 0, 0, time.UTC)
+
+	one, err := st.Add(Task{Profile: "personal", Prompt: "wake me", Spec: "in 2h"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := st.Add(Task{Profile: "personal", Prompt: "brief", Spec: "daily 08:00"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fired := now.Add(2 * time.Hour)
+	if err := st.MarkRan(one.ID, fired); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkRan(rec.ID, fired); err != nil {
+		t.Fatal(err)
+	}
+
+	tasks, _ := st.Load()
+	for _, tk := range tasks {
+		switch tk.ID {
+		case one.ID:
+			if tk.Enabled || !tk.NextRun.IsZero() {
+				t.Errorf("one-shot after firing = enabled=%v next=%v, want retired", tk.Enabled, tk.NextRun)
+			}
+		case rec.ID:
+			if !tk.Enabled || tk.NextRun.IsZero() {
+				t.Errorf("recurring after firing should re-arm, got enabled=%v next=%v", tk.Enabled, tk.NextRun)
+			}
 		}
 	}
 }

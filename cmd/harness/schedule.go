@@ -49,7 +49,7 @@ func runSchedule(args []string) {
 func scheduleAdd(store *schedule.Store, args []string) {
 	fs := flag.NewFlagSet("schedule add", flag.ExitOnError)
 	profileFlag := fs.String("profile", "", "identity profile to run as (default from config)")
-	spec := fs.String("spec", "", "schedule: 'every 30m' | 'daily 08:00' | 'weekly mon 09:00'")
+	spec := fs.String("spec", "", "schedule: 'every 30m' | 'daily 08:00' | 'weekly mon 09:00' | 'once 09:00' | 'in 2h' (one-shot)")
 	id := fs.String("id", "", "optional task id (auto-assigned if empty)")
 	providerSlug := fs.String("provider", "mock", "model provider to run this task with")
 	deliver := fs.String("deliver", "", "send output to a channel, e.g. telegram:<chatID> (default: stdout only)")

@@ -161,7 +161,9 @@ harness schedule run-due        # fire what's due (wire to system cron/launchd)
 harness schedule daemon         # or keep a process checking every minute
 ```
 
-Specs: `every 30m` · `every 1d` · `daily 08:00` · `weekly mon 09:00`. A task's
+Specs: `every 30m` · `every 1d` · `daily 08:00` · `weekly mon 09:00` — plus
+one-shots that fire once and retire: `once 09:00` · `in 2h` ("wake me in two
+hours and check on X"). A task's
 output streams to stdout by default; `-deliver telegram:<chatID>` (with
 `$TELEGRAM_BOT_TOKEN` set) also pushes it to your phone — the wire that turns a
 scheduled run into a proactive message.

@@ -36,18 +36,51 @@ func (t *Task) Due(now time.Time) bool {
 	return t.Enabled && !t.NextRun.IsZero() && !now.Before(t.NextRun)
 }
 
+// Once reports whether a spec fires a single time ("once …", "in …") — the
+// runner disables the task after it fires instead of re-arming it.
+func Once(spec string) bool {
+	f := strings.Fields(strings.ToLower(strings.TrimSpace(spec)))
+	return len(f) > 0 && (f[0] == "once" || f[0] == "in")
+}
+
 // NextRun computes the next fire time strictly after the reference time, from a
 // schedule spec. Supported forms:
 //
 //	every <dur>        e.g. "every 30m", "every 2h", "every 90m", "every 1d"
 //	daily HH:MM        e.g. "daily 08:00"  (next occurrence of that local time)
 //	weekly <day> HH:MM e.g. "weekly mon 09:00"
+//	once HH:MM         e.g. "once 09:00"  (next occurrence, fires once)
+//	in <dur>           e.g. "in 2h"       (a one-shot timer — "wake me in 2h")
 func NextRun(spec string, after time.Time) (time.Time, error) {
 	fields := strings.Fields(strings.ToLower(strings.TrimSpace(spec)))
 	if len(fields) == 0 {
 		return time.Time{}, fmt.Errorf("empty schedule spec")
 	}
 	switch fields[0] {
+	case "in":
+		if len(fields) != 2 {
+			return time.Time{}, fmt.Errorf("usage: in <duration> (e.g. in 2h)")
+		}
+		d, err := parseEvery(fields[1])
+		if err != nil {
+			return time.Time{}, err
+		}
+		return after.Add(d), nil
+
+	case "once":
+		if len(fields) != 2 {
+			return time.Time{}, fmt.Errorf("usage: once HH:MM (e.g. once 09:00)")
+		}
+		hh, mm, err := parseClock(fields[1])
+		if err != nil {
+			return time.Time{}, err
+		}
+		next := time.Date(after.Year(), after.Month(), after.Day(), hh, mm, 0, 0, after.Location())
+		if !next.After(after) {
+			next = next.AddDate(0, 0, 1)
+		}
+		return next, nil
+
 	case "every":
 		if len(fields) != 2 {
 			return time.Time{}, fmt.Errorf("usage: every <duration> (e.g. every 30m)")
@@ -90,7 +123,7 @@ func NextRun(spec string, after time.Time) (time.Time, error) {
 		}
 		return next, nil
 	}
-	return time.Time{}, fmt.Errorf("unrecognized schedule %q (try: every 30m | daily 08:00 | weekly mon 09:00)", spec)
+	return time.Time{}, fmt.Errorf("unrecognized schedule %q (try: every 30m | daily 08:00 | weekly mon 09:00 | once 09:00 | in 2h)", spec)
 }
 
 // parseEvery accepts Go durations plus a "<n>d" days form.
@@ -259,6 +292,12 @@ func (s *Store) MarkRan(id string, now time.Time) error {
 			continue
 		}
 		tasks[i].LastRun = now
+		if Once(tasks[i].Spec) {
+			// A one-shot has fired — retire it rather than re-arming.
+			tasks[i].Enabled = false
+			tasks[i].NextRun = time.Time{}
+			return s.Save(tasks)
+		}
 		if nr, nerr := NextRun(tasks[i].Spec, now); nerr == nil {
 			tasks[i].NextRun = nr
 		}
