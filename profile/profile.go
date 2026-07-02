@@ -125,6 +125,12 @@ func TasksDir() string {
 	return filepath.Join(DataDir(""), "tasks")
 }
 
+// PluginsDir is a profile's own exec-plugins directory — plugins available
+// only to this identity, layered over the shared and project-local ones.
+func PluginsDir(name string) string {
+	return filepath.Join(DataDir(name), "plugins")
+}
+
 // Dirs returns the directories scanned for *.md profile files: a project-local
 // ./profiles, plus $HARNESS_PROFILES_DIR (or <user-config-dir>/harness/profiles).
 func Dirs() []string {

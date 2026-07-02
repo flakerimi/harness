@@ -304,6 +304,7 @@ The harness has four pluggable layers, all file-based and per-identity scopable:
 | **Skills** | *procedures* the agent follows itself | `skills/<name>/SKILL.md` |
 | **Specialists** | *sub-agents* it dispatches tasks to | `agents/<name>.md` |
 | **Tools** | raw capabilities | connectors / `mcp.json` |
+| **Plugins** | executables that add tools + deliver kinds | `plugins/<exe>` |
 
 **Skills** (agentskills.io / Anthropic open format) reach the model by progressive
 disclosure: names + descriptions go in the system prompt; the model calls
@@ -332,6 +333,25 @@ You are a research specialist. Find concrete, sourced facts and return a brief.
 
 `harness skills` / `harness agents` / `harness profiles` list each layer. A skill
 is a *recipe*; a specialist is a *separate worker*.
+
+**Plugins** are the zero-framework extension seam: any executable dropped in
+`./plugins/` (or `<config>/harness/plugins/`, or a profile's own `plugins/`)
+that answers three verbs — writable in bash, Python, anything:
+
+```
+<exe> spec                    → JSON manifest: {"name", "tools": [...], "delivers": [...]}
+<exe> run <tool>              ← input JSON on stdin → output on stdout (exit ≠ 0 = error)
+<exe> deliver <kind> <dest>   ← text on stdin
+```
+
+Plugin tools join the agent namespaced (`dice__roll`) so they can't shadow
+built-ins; a manifest's `"writes": true` puts the tool behind the permission
+gate; and a `delivers` kind extends `-deliver` targets everywhere (schedules,
+wake-ups, background tasks) — a plugin advertising `sms` makes
+`-deliver sms:+1555…` work. The mediated env arrives as `$HARNESS_ROOT` /
+`$HARNESS_WORKSPACE`. See [`plugins.example/dice`](plugins.example/dice) for a
+complete one-file example. Where MCP suits full servers with sessions and
+state, a plugin is one file you drop in a directory.
 
 ## The developer identity — harness develops harness
 

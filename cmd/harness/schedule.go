@@ -16,6 +16,7 @@ import (
 
 	"github.com/flakerimi/harness/app"
 	"github.com/flakerimi/harness/channel/telegram"
+	"github.com/flakerimi/harness/connector/plugin"
 	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/schedule"
 )
@@ -282,7 +283,13 @@ func deliver(ctx context.Context, target, text string) error {
 	case "webhook":
 		return deliverWebhook(ctx, dest, text)
 	default:
-		return fmt.Errorf("unknown deliver kind %q (supported: telegram, webhook)", kind)
+		// A plugin can extend deliver kinds: any discovered executable whose
+		// manifest advertises this kind handles the target.
+		plugs, _ := plugin.Discover(ctx, app.PluginDirs("")...)
+		if p, ok := plugin.FindDeliverer(plugs, kind); ok {
+			return p.Deliver(ctx, kind, dest, text)
+		}
+		return fmt.Errorf("unknown deliver kind %q (built-in: telegram, webhook; no plugin advertises it)", kind)
 	}
 }
 

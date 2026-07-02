@@ -1,0 +1,52 @@
+#!/bin/sh
+# Example harness exec plugin — copy into ./plugins/ (or
+# <user-config>/harness/plugins/) and make it executable.
+#
+# The whole contract is three verbs:
+#   dice spec                  → print the JSON manifest
+#   dice run <tool>            → tool input JSON on stdin, output on stdout, exit≠0 = error
+#   dice deliver <kind> <dest> → text on stdin (this plugin: appends to a file)
+#
+# The mediated env arrives as $HARNESS_ROOT and $HARNESS_WORKSPACE.
+
+case "$1" in
+  spec)
+    cat <<'JSON'
+{
+  "name": "dice",
+  "description": "Roll dice; deliver text by appending to a file.",
+  "tools": [
+    {
+      "name": "roll",
+      "description": "Roll N six-sided dice and return the results.",
+      "input_schema": {
+        "type": "object",
+        "properties": { "n": { "type": "integer", "description": "how many dice (default 1)" } }
+      }
+    }
+  ],
+  "delivers": ["file"]
+}
+JSON
+    ;;
+  run)
+    # crude JSON read: pull "n" out of the input; default 1
+    input=$(cat)
+    n=$(printf '%s' "$input" | sed -n 's/.*"n"[^0-9]*\([0-9][0-9]*\).*/\1/p')
+    [ -z "$n" ] && n=1
+    i=0; out=""
+    while [ "$i" -lt "$n" ]; do
+      out="$out $(( $(od -An -N2 -tu2 /dev/urandom | tr -d ' ') % 6 + 1 ))"
+      i=$((i + 1))
+    done
+    echo "rolled:$out"
+    ;;
+  deliver)
+    # deliver file:<path> — append the text to that file
+    cat >> "$3"
+    ;;
+  *)
+    echo "usage: dice spec|run <tool>|deliver <kind> <dest>" >&2
+    exit 2
+    ;;
+esac

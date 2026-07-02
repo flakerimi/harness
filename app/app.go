@@ -18,6 +18,7 @@ import (
 	"github.com/flakerimi/harness/connector"
 	"github.com/flakerimi/harness/connector/google"
 	"github.com/flakerimi/harness/connector/mcp"
+	"github.com/flakerimi/harness/connector/plugin"
 	"github.com/flakerimi/harness/memory"
 	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/provider"
@@ -337,6 +338,17 @@ func Connectors(allowShell bool, profileName string) *connector.Registry {
 		r.Add(google.New(auth.NewStore(profile.AuthFile(profileName)), id, secret))
 	}
 
+	// Exec plugins: dropped executables (project-local, this identity's own,
+	// then shared) join as connectors — their tools arrive namespaced like any
+	// external integration, and a manifest's writes flag feeds the gate.
+	plugs, perrs := plugin.Discover(context.Background(), PluginDirs(profileName)...)
+	for _, e := range perrs {
+		fmt.Fprintln(os.Stderr, "warning:", e)
+	}
+	for _, p := range plugs {
+		r.Add(plugin.New(p))
+	}
+
 	// Shared MCP servers (mcp.json), then this identity's own servers
 	// (profiles/<name>/mcp.json) layered on top — so a business profile can have
 	// tools a personal one doesn't.
@@ -355,6 +367,17 @@ func Connectors(allowShell bool, profileName string) *connector.Registry {
 		r.Add(mcp.New(c))
 	}
 	return r
+}
+
+// PluginDirs are the exec-plugin locations in priority order: project-local
+// ./plugins, the identity's own plugins, then the shared user-config dir.
+// First plugin claiming a name wins.
+func PluginDirs(profileName string) []string {
+	dirs := []string{"plugins"}
+	if profileName != "" {
+		dirs = append(dirs, profile.PluginsDir(profileName))
+	}
+	return append(dirs, profile.PluginsDir(""))
 }
 
 // ModelsConfigPath is the models routing table file ($HARNESS_MODELS_FILE or models.json).

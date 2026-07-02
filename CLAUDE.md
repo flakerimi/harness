@@ -47,7 +47,7 @@ The design is a stack of narrow seams. Read these packages in order to understan
 
 ## Conventions that matter here
 
-- **Everything pluggable is a dropped file, per-identity scopable.** Identities = `profiles/<name>.md`; skills = `skills/<name>/SKILL.md`; specialists = `agents/<name>.md`; MCP tools = `mcp.json`. Project-local dirs are scanned first, then the user-config dir.
+- **Everything pluggable is a dropped file, per-identity scopable.** Identities = `profiles/<name>.md`; skills = `skills/<name>/SKILL.md`; specialists = `agents/<name>.md`; MCP tools = `mcp.json`; exec plugins = executables in `plugins/` (`connector/plugin`: `spec`/`run <tool>`/`deliver <kind> <dest>` over stdio — tools namespaced `<plugin>__<tool>`, manifest `writes` feeds the permission gate, `delivers` kinds extend `-deliver` targets via the fallback in `cmd/harness/schedule.go`; example in `plugins.example/`). Project-local dirs are scanned first, then the user-config dir.
 - **Per-identity data dirs** (`profile/profile.go`): a profile's auth, memory, skills, sessions, and `mcp.json` live under `<user-config>/harness/profiles/<name>/`. File profiles override built-ins of the same name; an identity's own skills win on name conflicts. Memory + `learn_skill` are wired **only when a profile is set** — a generic stateless run keeps no memory.
 - **Capabilities, not branches.** Providers opt into features via `Request.CapFlags` (`caching`, `tools`, `structured`); unknown ⇒ conservative default. Don't add per-vendor `if` branches above the provider layer.
 - **MCP/external connector tools are namespaced** (`filesystem__read_file`) so they can't shadow built-ins; native built-ins keep plain names.
