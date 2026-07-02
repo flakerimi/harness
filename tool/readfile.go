@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 )
 
 // ReadFile reads a UTF-8 text file from within Env.Root. It is the reference
@@ -16,13 +14,13 @@ type ReadFile struct{}
 func (ReadFile) Spec() Spec {
 	return Spec{
 		Name:        "read_file",
-		Description: "Read a UTF-8 text file relative to the workspace root.",
+		Description: "Read a UTF-8 text file. Paths are relative to the working root; prefix with \"workspace:\" to read from your persistent workspace.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"path": map[string]any{
 					"type":        "string",
-					"description": "Path to the file, relative to the workspace root.",
+					"description": "Path to the file, relative to the working root (or workspace: prefixed).",
 				},
 			},
 			"required": []string{"path"},
@@ -41,20 +39,9 @@ func (ReadFile) Run(ctx context.Context, input json.RawMessage, env *Env) (Resul
 		return Result{Content: "path is required", IsError: true}, nil
 	}
 
-	root := env.Root
-	if root == "" {
-		root = "."
-	}
-	absRoot, err := filepath.Abs(root)
+	full, err := resolvePath(env, args.Path)
 	if err != nil {
 		return Result{Content: err.Error(), IsError: true}, nil
-	}
-	full := filepath.Join(absRoot, filepath.Clean("/"+args.Path))
-
-	// Confine reads to the root — reject traversal that escapes the sandbox.
-	rel, err := filepath.Rel(absRoot, full)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return Result{Content: "path escapes workspace root", IsError: true}, nil
 	}
 
 	data, err := os.ReadFile(full)

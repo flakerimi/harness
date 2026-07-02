@@ -23,6 +23,7 @@ func (Bash) Spec() Spec {
 	return Spec{
 		Name:        "bash",
 		Description: "Run a shell command (sh -c) in the workspace root and return its combined stdout+stderr. Use for running a skill's bundled scripts or quick local commands.",
+		Writes:      true,
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

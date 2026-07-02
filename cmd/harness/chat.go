@@ -33,6 +33,7 @@ func runChat(args []string) {
 	sessionID := fs.String("session", "default", "conversation id (scoped to the profile)")
 	reset := fs.Bool("new", false, "start this session fresh, discarding prior history")
 	compact := fs.Int("compact", 120000, "summarize older turns once the chat's estimated tokens exceed this (0 disables)")
+	yes := fs.Bool("yes", false, "auto-approve mutating tool calls (write_file, edit_file, bash) instead of asking")
 	_ = fs.Parse(args)
 
 	profileName := *profileFlag
@@ -56,7 +57,11 @@ func runChat(args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	ag, err := app.Build(ctx, app.Spec{
+	// One reader serves the REPL and the write-confirmation gate, so the two
+	// never fight over stdin's buffered bytes.
+	in := bufio.NewReader(os.Stdin)
+
+	spec := app.Spec{
 		Provider:  *providerSlug,
 		Model:     *model,
 		System:    "You are a helpful assistant.",
@@ -69,7 +74,11 @@ func runChat(args []string) {
 		Escalate:  *escalate,
 		Bash:      *bash,
 		Compact:   *compact,
-	})
+	}
+	if !*yes {
+		spec.ConfirmWrite = confirmWriteReader(in)
+	}
+	ag, err := app.Build(ctx, spec)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
@@ -81,16 +90,15 @@ func runChat(args []string) {
 	}
 	fmt.Fprintf(os.Stderr, "chat: %s · session %q · %d prior turns — /exit to quit, /reset to clear\n", label, sess.ID, sess.Turns())
 
-	scan := bufio.NewScanner(os.Stdin)
-	scan.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	h := &cliHandler{}
 	for {
 		fmt.Print("\nyou › ")
-		if !scan.Scan() {
+		raw, rerr := in.ReadString('\n')
+		if rerr != nil && raw == "" {
 			fmt.Println()
 			break // EOF (Ctrl-D)
 		}
-		line := strings.TrimSpace(scan.Text())
+		line := strings.TrimSpace(raw)
 		switch line {
 		case "":
 			continue

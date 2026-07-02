@@ -23,6 +23,7 @@ type Spec struct {
 	Name        string
 	Description string
 	InputSchema map[string]any
+	Writes      bool // a mutating action (writes files, runs commands); permission gates key on this
 }
 
 // Result is a tool's output, handed back to the model as a tool result.

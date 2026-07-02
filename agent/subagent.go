@@ -24,6 +24,7 @@ type Delegate struct {
 	System      string            // worker persona
 	MaxTokens   int
 	Caps        []string
+	Permission  PermissionGate // caller's gate, propagated so delegation can't bypass write policy
 }
 
 func (d Delegate) Spec() tool.Spec {
@@ -63,13 +64,14 @@ func (d Delegate) Run(ctx context.Context, input json.RawMessage, env *tool.Env)
 	}
 
 	worker := New(d.Provider, d.Tools, Options{
-		System:    d.System,
-		Router:    d.Router,
-		BaseTier:  d.Tier,
-		Escalate:  true, // a fast worker can still escalate if it stalls
-		MaxTokens: d.MaxTokens,
-		Caps:      d.Caps,
-		Env:       env,
+		System:     d.System,
+		Router:     d.Router,
+		BaseTier:   d.Tier,
+		Escalate:   true, // a fast worker can still escalate if it stalls
+		MaxTokens:  d.MaxTokens,
+		Caps:       d.Caps,
+		Env:        env,
+		Permission: d.Permission,
 	})
 
 	var out strings.Builder

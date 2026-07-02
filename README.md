@@ -49,7 +49,7 @@ a **schedule**, and improves itself.
 
 ```
 provider/   Provider interface + neutral types; mock/anthropic/openai(+compat) adapters; registry
-tool/       Tool interface, Registry, mediated Env; read_file, web_fetch, web_search, bash
+tool/       Tool interface, Registry, mediated Env; read/write/edit/list files, web_fetch, web_search, bash
 agent/      the provider-agnostic loop (stream → accumulate → dispatch tools → repeat) + compaction
 router/     tier → per-provider model table; classify + escalate
 profile/    identities (persona, tier, delegation) + per-identity data dirs
@@ -245,7 +245,16 @@ harness -profile personal "what's on my calendar"  # uses the personal account
 Everything is per-identity, under `<config>/harness/profiles/<name>/`. On
 remote surfaces (daemon, Telegram, schedules) the identity's filesystem tools
 are rooted in its **workspace** — a persistent home for files that survives
-across sessions; a CLI run works in cwd (`-root`) with the workspace alongside.
+across sessions; a CLI run works in cwd (`-root`) with the workspace alongside
+(tools address it with a `workspace:` path prefix).
+
+The agent has real hands — `write_file`, `edit_file`, `list_dir` next to
+`read_file` — mediated by a **permission gate**: on the CLI (your own
+directory) every mutating call (`write_file`, `edit_file`, `bash`) asks on the
+terminal first (`-yes` waives it; non-interactive runs deny). Remote surfaces
+skip the prompt — they're sandboxed inside the identity's workspace, and path
+traversal out of the sandbox is rejected. The gate follows delegated and
+dispatched workers too, so it can't be bypassed via a sub-agent.
 
 | Scoped per identity | Where |
 |---|---|

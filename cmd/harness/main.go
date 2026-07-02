@@ -109,6 +109,7 @@ func runAgent(args []string) {
 	escalate := fs.Bool("escalate", true, "escalate a tier when a turn produces nothing usable")
 	bash := fs.Bool("bash", false, "enable the bash tool (runs shell commands — trusted skills only)")
 	critique := fs.Bool("critique", false, "self-critique: review the answer and revise once before returning")
+	yes := fs.Bool("yes", false, "auto-approve mutating tool calls (write_file, edit_file, bash) instead of asking")
 	_ = fs.Parse(args)
 
 	prompt := strings.TrimSpace(strings.Join(fs.Args(), " "))
@@ -132,7 +133,7 @@ func runAgent(args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	ag, err := app.Build(ctx, app.Spec{
+	spec := app.Spec{
 		Provider:  *providerSlug,
 		Model:     *model,
 		System:    *system,
@@ -145,7 +146,13 @@ func runAgent(args []string) {
 		Escalate:  *escalate,
 		Bash:      *bash,
 		Critique:  *critique,
-	})
+	}
+	// The CLI works in the user's own directory — confirm writes on the
+	// terminal unless -yes waves them through.
+	if !*yes {
+		spec.ConfirmWrite = confirmWriteTTY()
+	}
+	ag, err := app.Build(ctx, spec)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)

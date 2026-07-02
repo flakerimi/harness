@@ -26,6 +26,10 @@ type WorkerConfig struct {
 // the specialist's result back. This is the pluggable generalization of the
 // single-worker Delegate tool.
 type Dispatch struct {
+	// Permission propagates the caller's gate to every specialist run, so a
+	// gated surface can't have its write policy bypassed via dispatch.
+	Permission PermissionGate
+
 	prov      provider.Provider
 	router    router.Router
 	maxTokens int
@@ -83,13 +87,14 @@ func (d *Dispatch) Run(ctx context.Context, input json.RawMessage, env *tool.Env
 	}
 
 	worker := New(d.prov, w.Tools, Options{
-		System:    w.System,
-		Router:    d.router,
-		BaseTier:  w.Tier,
-		Escalate:  true,
-		MaxTokens: d.maxTokens,
-		Caps:      d.caps,
-		Env:       env,
+		System:     w.System,
+		Router:     d.router,
+		BaseTier:   w.Tier,
+		Escalate:   true,
+		MaxTokens:  d.maxTokens,
+		Caps:       d.caps,
+		Env:        env,
+		Permission: d.Permission,
 	})
 
 	var out strings.Builder

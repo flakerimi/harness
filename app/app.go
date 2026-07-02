@@ -43,6 +43,12 @@ type Spec struct {
 	Bash      bool
 	Compact   int  // summarizing-compaction token budget; 0 disables
 	Critique  bool // run a critic→revise pass before returning a final answer
+
+	// ConfirmWrite, when set, gates mutating tools (write_file, edit_file,
+	// bash, …) behind a confirmation callback — the CLI wires a terminal
+	// prompt here. Nil allows writes (remote surfaces are sandboxed in the
+	// identity's workspace instead).
+	ConfirmWrite func(toolName, detail string) bool
 }
 
 // memDigestCap bounds how many memories are injected into the system prompt;
@@ -64,6 +70,15 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 	reg, err := Connectors(spec.Bash, spec.Profile).Tools(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	// Permission: gate mutating tools behind the surface's confirmation
+	// callback (the CLI's terminal prompt). Built over the connector registry
+	// and handed to the orchestrator AND every worker path (delegate,
+	// dispatch), so delegation can't bypass the write policy.
+	var gate agent.PermissionGate
+	if spec.ConfirmWrite != nil {
+		gate = agent.ConfirmWrites(reg, spec.ConfirmWrite)
 	}
 
 	// Model precedence: explicit model, else a config-pinned model for this
@@ -102,6 +117,7 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		Env:           &tool.Env{Root: root, Workspace: workspace},
 		CompactTokens: spec.Compact,
 		Critique:      spec.Critique,
+		Permission:    gate,
 	}
 	toolReg := reg // tools the orchestrator uses
 
@@ -156,13 +172,14 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 				orch.Register(t)
 			}
 			orch.Register(agent.Delegate{
-				Provider:  prov,
-				Tools:     reg, // worker gets the connector tools + load_skill (no delegate → no recursion)
-				Router:    rt,
-				Tier:      prof.WorkerTier,
-				System:    workerSystem,
-				MaxTokens: spec.MaxTokens,
-				Caps:      caps,
+				Provider:   prov,
+				Tools:      reg, // worker gets the connector tools + load_skill (no delegate → no recursion)
+				Router:     rt,
+				Tier:       prof.WorkerTier,
+				System:     workerSystem,
+				MaxTokens:  spec.MaxTokens,
+				Caps:       caps,
+				Permission: gate,
 			})
 			toolReg = orch
 		}
@@ -221,7 +238,9 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 				Tools:       wtools,
 			}
 		}
-		toolReg.Register(agent.NewDispatch(prov, rt, spec.MaxTokens, caps, workers))
+		disp := agent.NewDispatch(prov, rt, spec.MaxTokens, caps, workers)
+		disp.Permission = gate
+		toolReg.Register(disp)
 		if d := subagent.DiscoveryText(specs); d != "" {
 			if opts.System != "" {
 				opts.System += "\n\n"
@@ -291,6 +310,9 @@ func Connectors(allowShell bool, profileName string) *connector.Registry {
 	}
 	tools := []tool.Tool{
 		tool.ReadFile{},
+		tool.WriteFile{},
+		tool.EditFile{},
+		tool.ListDir{},
 		tool.WebFetch{},
 		tool.WebSearch{SearxngURL: cfg.Search.SearxngURL, SearxngToken: cfg.Search.SearxngToken},
 	}
