@@ -22,6 +22,24 @@ func TestMarkdownToHTML(t *testing.T) {
 	}
 }
 
+func TestMarkdownTable(t *testing.T) {
+	md := "| Style | Syntax |\n|---|---|\n| **Bold** | `*b*` |\n| Italic | _i_ |"
+	got := MarkdownToHTML(md)
+	if !strings.Contains(got, "<pre>") || !strings.Contains(got, "</pre>") {
+		t.Fatalf("table should become a <pre> block:\n%s", got)
+	}
+	// Header cells present, inline markdown stripped, columns aligned (padded).
+	if !strings.Contains(got, "Style") || !strings.Contains(got, "Syntax") {
+		t.Errorf("header cells missing:\n%s", got)
+	}
+	if strings.Contains(got, "**Bold**") || strings.Contains(got, "`*b*`") {
+		t.Errorf("cell markdown should be stripped:\n%s", got)
+	}
+	if !strings.Contains(got, "Bold  ") { // padded to the column width of "Italic"/"Style"
+		t.Errorf("columns not aligned/padded:\n%s", got)
+	}
+}
+
 func TestMarkdownEscapesAndProtectsCode(t *testing.T) {
 	// Raw < > & must be escaped so Telegram's HTML parser doesn't choke.
 	got := MarkdownToHTML("use a < b && c > d")
