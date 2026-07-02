@@ -65,6 +65,9 @@ func main() {
 		case "task":
 			runTask(os.Args[2:])
 			return
+		case "pulse":
+			runPulse(os.Args[2:])
+			return
 		case "serve":
 			runServe(os.Args[2:])
 			return

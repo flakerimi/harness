@@ -120,6 +120,7 @@ harness serve                 # HTTP+SSE server (POST /v1/chat)
 harness channel telegram ...  # reach the assistant from Telegram
 harness schedule add ...      # proactive scheduled tasks
 harness task add ...          # queue background work ("do X, report when done")
+harness pulse -deliver ...    # the heartbeat: periodic check-ins, silent when quiet
 harness profiles              # list identities
 harness skills                # list skills (incl. the identity's learned ones)
 harness skills search <q>     # find skills in the git registry
@@ -186,6 +187,26 @@ harness task drain           # execute queued jobs now (no daemon needed)
 
 Jobs persist as JSON; a daemon restart re-queues anything caught mid-run.
 Failures are delivered too, so the asker is never left waiting on silence.
+
+### Pulse — presence, not just availability
+
+The pulse is the identity's heartbeat: on a schedule it looks around its own
+house — finished/failed background work (`task_status`), the next hours of
+calendar, one resurfaced memory — and decides whether anything deserves your
+attention. Something worth saying → one short message to your channel.
+Nothing → **it sends nothing** (an empty reply skips delivery; silence is the
+default, not a failure).
+
+```sh
+harness pulse -deliver telegram:<chatID>            # daily 08:30 check-in
+harness pulse -spec "every 4h" -deliver telegram:…  # more of a companion
+harness pulse                                       # show the current pulse
+harness pulse -off                                  # stop it
+```
+
+One stable schedule task per identity (re-running updates it in place); the
+`pulse` skill defines the look-around procedure, and the identity can refine
+it over time like any other skill.
 
 ### Daemon — one background process
 

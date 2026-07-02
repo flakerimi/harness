@@ -304,9 +304,12 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		toolReg.Register(session.NewReviewTool(session.NewStore(profile.SessionsDir(spec.Profile))))
 
 		// Background work: let the identity queue long jobs for the daemon's
-		// task worker instead of blocking the conversation; the result is
-		// delivered to this surface's deliver target when done.
-		toolReg.Register(task.NewEnqueueTool(task.NewStore(profile.TasksDir()), spec.Profile, spec.Provider, spec.TaskDeliver))
+		// task worker instead of blocking the conversation (the result is
+		// delivered to this surface's deliver target when done), and see its
+		// own queue so it can report progress and notice failures.
+		taskStore := task.NewStore(profile.TasksDir())
+		toolReg.Register(task.NewEnqueueTool(taskStore, spec.Profile, spec.Provider, spec.TaskDeliver))
+		toolReg.Register(task.NewStatusTool(taskStore, spec.Profile))
 	}
 
 	return agent.New(prov, toolReg, opts), nil

@@ -100,3 +100,35 @@ func TestEnqueueToolQueuesForIdentity(t *testing.T) {
 		t.Error("empty prompt should error")
 	}
 }
+
+func TestStatusToolShowsOwnQueueOnly(t *testing.T) {
+	s := NewStore(t.TempDir())
+	mine, _ := s.Enqueue(Task{Profile: "personal", Prompt: "my research job"})
+	s.Enqueue(Task{Profile: "business", Prompt: "someone else's job"})
+
+	// Finish one with a result, fail nothing yet.
+	claimed, _ := s.NextQueued()
+	s.Complete(claimed, "the findings", nil)
+	_ = mine
+
+	tl := NewStatusTool(s, "personal")
+	if tl.Spec().Writes {
+		t.Error("task_status must be read-only")
+	}
+	res, err := tl.Run(context.Background(), nil, nil)
+	if err != nil || res.IsError {
+		t.Fatalf("run: %v %s", err, res.Content)
+	}
+	if !strings.Contains(res.Content, "my research job") || !strings.Contains(res.Content, "the findings") {
+		t.Errorf("should show own task + result: %q", res.Content)
+	}
+	if strings.Contains(res.Content, "someone else's job") {
+		t.Errorf("must not leak other identities' tasks: %q", res.Content)
+	}
+
+	// An identity with no jobs gets a plain statement, not an error.
+	res, _ = NewStatusTool(s, "developer").Run(context.Background(), nil, nil)
+	if res.IsError || !strings.Contains(res.Content, "no background tasks") {
+		t.Errorf("empty queue = %+v", res)
+	}
+}
