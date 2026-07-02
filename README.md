@@ -381,7 +381,9 @@ OAuth), and OpenAI-compatible (OpenAI, DeepSeek, Gemini, Kimi, Mistral, Qwen,
 OpenRouter, Fireworks, Together, xAI, Z.ai, MiMo, Apple, Ollama, LM Studio).
 Connectors: native tools, MCP, and Google Calendar + Gmail (read + draft + send).
 
-Next: more channels (Slack).
+The integration surface — what's shipped, what's planned, and which of the four
+routes (native / MCP / exec plugin / deliver target) a new integration should
+take — lives in [INTEGRATIONS.md](INTEGRATIONS.md).
 
 ## Contributing
 
