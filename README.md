@@ -329,6 +329,24 @@ You are a research specialist. Find concrete, sourced facts and return a brief.
 `harness skills` / `harness agents` / `harness profiles` list each layer. A skill
 is a *recipe*; a specialist is a *separate worker*.
 
+## The developer identity — harness develops harness
+
+The repo ships a `developer` profile: a senior-engineer identity with real
+hands. Root it in any checkout and it reads the project's own guidance first,
+edits surgically, and verifies with the project's checks before calling
+anything done (the `dev-loop` skill encodes the loop). Every write asks on
+your terminal unless you `-yes` it.
+
+```sh
+harness chat -profile developer -root . -bash -provider claude
+you › the error messages in tool/fs.go are inconsistent — unify and run the tests
+```
+
+Because it's an identity, it compounds: it **remembers** the codebase's
+conventions and gotchas between sessions, **learns skills** from procedures it
+works out, and can `reflect` on past sessions to improve. Pointed at this very
+repository, harness develops harness.
+
 ## Status
 
 The engine plus all six pillars: identities, memory, skills (+ self-learning
