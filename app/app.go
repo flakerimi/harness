@@ -45,6 +45,7 @@ type Spec struct {
 	Bash      bool
 	Compact   int  // summarizing-compaction token budget; 0 disables
 	Critique  bool // run a critic→revise pass before returning a final answer
+	MaxTurns  int  // tool-call round-trip budget per request; 0 = agent default (16). Working surfaces set more.
 
 	// ConfirmWrite, when set, gates mutating tools (write_file, edit_file,
 	// bash, …) behind a confirmation callback — the CLI wires a terminal
@@ -124,6 +125,7 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		Env:           &tool.Env{Root: root, Workspace: workspace},
 		CompactTokens: spec.Compact,
 		Critique:      spec.Critique,
+		MaxTurns:      spec.MaxTurns,
 		Permission:    gate,
 	}
 	toolReg := reg // tools the orchestrator uses

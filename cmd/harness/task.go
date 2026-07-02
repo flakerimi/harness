@@ -130,6 +130,7 @@ func executeTask(ctx context.Context, store *task.Store, t *task.Task, defaultPr
 		Route:     true,
 		Escalate:  true,
 		Compact:   compact,
+		MaxTurns:  48, // background work is exactly the place for a deep tool budget
 	})
 	if err == nil {
 		c := &agent.Collector{}

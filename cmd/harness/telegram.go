@@ -189,6 +189,7 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 			Classify:  false,
 			Escalate:  true,
 			Compact:   o.Compact,
+			MaxTurns:  40,
 			// Background work queued from this chat reports back to this chat.
 			TaskDeliver: "telegram:" + strconv.FormatInt(chatID, 10),
 		})

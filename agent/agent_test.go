@@ -198,3 +198,47 @@ func TestAgentParallelTools(t *testing.T) {
 		t.Errorf("stop = %q, want %q", h.stop, provider.StopEndTurn)
 	}
 }
+
+// loopingProvider calls a tool every turn until it sees the wrap-up nudge
+// (a request without tools), then answers with text — the budget-exhaustion path.
+type loopingProvider struct{ turn int }
+
+func (l *loopingProvider) Name() string { return "looping" }
+
+func (l *loopingProvider) Stream(_ context.Context, req provider.Request, emit func(provider.Event)) error {
+	defer func() { l.turn++ }()
+	if len(req.Tools) == 0 {
+		emit(provider.Event{Type: provider.EventTextDelta, TextDelta: "wrap-up: best effort from partial work"})
+		emit(provider.Event{Type: provider.EventStop, StopReason: provider.StopEndTurn})
+		return nil
+	}
+	emit(provider.Event{Type: provider.EventToolUseStart, Index: 0, ToolUseID: "x", ToolName: "echo"})
+	emit(provider.Event{Type: provider.EventToolUseDelta, Index: 0, InputDelta: `{"msg":"again"}`})
+	emit(provider.Event{Type: provider.EventStop, StopReason: provider.StopToolUse})
+	return nil
+}
+
+func TestTurnBudgetWrapsUpInsteadOfErroring(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&echoTool{})
+	prov := &loopingProvider{}
+	ag := New(prov, reg, Options{MaxTurns: 3})
+
+	var out strings.Builder
+	history, err := ag.Continue(context.Background(), nil, "go", &collectHandler{out: &out})
+	if err != nil {
+		t.Fatalf("budget exhaustion should wrap up, not error: %v", err)
+	}
+	if !strings.Contains(out.String(), "wrap-up") {
+		t.Errorf("final text = %q, want the wrap-up answer", out.String())
+	}
+	// 3 tool turns + 1 final no-tools turn.
+	if prov.turn != 4 {
+		t.Errorf("provider turns = %d, want 4 (3 budget + 1 wrap-up)", prov.turn)
+	}
+	// The wrap-up nudge and answer are part of the returned history.
+	last := history[len(history)-1]
+	if last.Role != "assistant" {
+		t.Errorf("history should end with the wrap-up answer, ends with %q", last.Role)
+	}
+}

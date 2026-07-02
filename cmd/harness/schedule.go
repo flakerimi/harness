@@ -228,6 +228,7 @@ func runScheduledTask(ctx context.Context, t schedule.Task) {
 		Route:     true,
 		Classify:  false,
 		Escalate:  true,
+		MaxTurns:  40, // scheduled runs (pulse, reflect) reach for several tools
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

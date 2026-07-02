@@ -7,7 +7,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
 
@@ -165,7 +164,22 @@ func (a *Agent) Continue(ctx context.Context, history []provider.Message, userIn
 		results := a.runTools(ctx, assistant, h)
 		msgs = append(msgs, provider.Message{Role: "tool", Content: results})
 	}
-	return msgs, fmt.Errorf("agent: exceeded %d turns", maxTurns)
+
+	// Tool budget exhausted mid-work. Don't throw the work away — run one
+	// final no-tools turn so the model wraps up with what it has gathered.
+	msgs = append(msgs, provider.Message{
+		Role:    "user",
+		Content: []provider.Block{{Type: provider.BlockText, Text: "(Tool budget for this request is exhausted — no more tool calls will run. Give your best final answer now from what you've already gathered, and note plainly anything left unfinished.)"}},
+	})
+	model := a.modelFor(tier)
+	a.notifyRoute(h, tier, model)
+	assistant, stop, err := a.streamFinal(ctx, msgs, model, h)
+	if err != nil {
+		return msgs, err
+	}
+	msgs = append(msgs, assistant)
+	h.OnStop(stop)
+	return msgs, nil
 }
 
 func (a *Agent) routingOn() bool {
@@ -283,11 +297,21 @@ func fumbled(m provider.Message) bool {
 // message. Tool calls are tracked per content-block index so parallel calls
 // from a single turn don't get interleaved into one another.
 func (a *Agent) streamOne(ctx context.Context, msgs []provider.Message, model string, h Handler) (provider.Message, string, error) {
+	return a.stream(ctx, msgs, model, h, a.providerTools())
+}
+
+// streamFinal is the budget-exhausted wrap-up call: no tools offered, so the
+// model must answer with what it has.
+func (a *Agent) streamFinal(ctx context.Context, msgs []provider.Message, model string, h Handler) (provider.Message, string, error) {
+	return a.stream(ctx, msgs, model, h, nil)
+}
+
+func (a *Agent) stream(ctx context.Context, msgs []provider.Message, model string, h Handler, provTools []provider.Tool) (provider.Message, string, error) {
 	req := provider.Request{
 		Model:     model,
 		System:    a.opts.System,
 		Messages:  a.assemble(ctx, msgs),
-		Tools:     a.providerTools(),
+		Tools:     provTools,
 		MaxTokens: a.opts.MaxTokens,
 		CapFlags:  a.opts.Caps,
 	}

@@ -95,6 +95,7 @@ func buildAPIServer(o apiOptions) *server.Server {
 				Escalate:  true,
 				Bash:      o.Bash,
 				Compact:   o.Compact,
+				MaxTurns:  40,
 			})
 		},
 		Sessions: func(profileName string) *session.Store {
