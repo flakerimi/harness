@@ -103,6 +103,10 @@ func (a *Agent) Run(ctx context.Context, userInput string, h Handler) error {
 // result and pass it back next turn for true multi-turn memory. On error it
 // returns the history accumulated so far so nothing is silently lost.
 func (a *Agent) Continue(ctx context.Context, history []provider.Message, userInput string, h Handler) ([]provider.Message, error) {
+	// Persisted histories can carry damage (malformed or dangling tool calls
+	// from clipped turns); repair before replay so one bad block can't wedge
+	// the session forever.
+	history = RepairHistory(history)
 	msgs := make([]provider.Message, 0, len(history)+2)
 	msgs = append(msgs, history...)
 	msgs = append(msgs, provider.Message{

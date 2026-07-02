@@ -71,3 +71,47 @@ func TestWindowNoTrimWhenSmall(t *testing.T) {
 		t.Errorf("len = %d, want %d (no trim when under budget)", len(got), len(history))
 	}
 }
+
+func TestRepairHistoryHealsPoisonedSessions(t *testing.T) {
+	h := []provider.Message{
+		{Role: "user", Content: []provider.Block{{Type: provider.BlockText, Text: "make this a report"}}},
+		// The wedge: an assistant message whose only tool call is malformed
+		// (empty name) — exactly what froze a live session.
+		{Role: "assistant", Content: []provider.Block{
+			{Type: provider.BlockToolUse, ToolUse: &provider.ToolUseBlock{ID: "bad", Name: ""}},
+		}},
+		{Role: "user", Content: []provider.Block{{Type: provider.BlockText, Text: "hello?"}}},
+		// A clipped turn: a valid tool call with no tool results after it.
+		{Role: "assistant", Content: []provider.Block{
+			{Type: provider.BlockText, Text: "let me check"},
+			{Type: provider.BlockToolUse, ToolUse: &provider.ToolUseBlock{ID: "t1", Name: "web_search", Input: map[string]any{"q": "x"}}},
+		}},
+	}
+	got := RepairHistory(h)
+
+	// The malformed-call message vanishes entirely (nothing valid remained).
+	for _, m := range got {
+		for _, b := range m.Content {
+			if b.Type == provider.BlockToolUse && (b.ToolUse == nil || b.ToolUse.Name == "") {
+				t.Fatal("empty-name tool_use must not survive repair")
+			}
+		}
+	}
+	// The dangling call is answered by a synthetic error result.
+	last := got[len(got)-1]
+	if last.Role != "tool" || len(last.Content) != 1 {
+		t.Fatalf("dangling tool_use should be closed, history ends with %+v", last)
+	}
+	tr := last.Content[0].ToolResult
+	if tr == nil || tr.ToolUseID != "t1" || !tr.IsError {
+		t.Errorf("synthetic result = %+v", tr)
+	}
+	// Healthy histories pass through untouched.
+	healthy := []provider.Message{
+		{Role: "user", Content: []provider.Block{{Type: provider.BlockText, Text: "hi"}}},
+		{Role: "assistant", Content: []provider.Block{{Type: provider.BlockText, Text: "hello"}}},
+	}
+	if out := RepairHistory(healthy); len(out) != 2 {
+		t.Errorf("healthy history changed: %+v", out)
+	}
+}
