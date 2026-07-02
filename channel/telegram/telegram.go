@@ -143,6 +143,16 @@ func (b *Bot) Send(ctx context.Context, chatID int64, text string) error {
 	return b.sendMessage(ctx, chatID, text, nil, "")
 }
 
+// SendChatAction shows a transient status in the chat (e.g. "typing"). Telegram
+// clears it after ~5s, so callers repeat it during longer operations.
+func (b *Bot) SendChatAction(ctx context.Context, chatID int64, action string) error {
+	q := url.Values{}
+	q.Set("chat_id", strconv.FormatInt(chatID, 10))
+	q.Set("action", action)
+	_, err := b.call(ctx, "sendChatAction", q)
+	return err
+}
+
 // SendKeyboard sends a plain-text message with an inline keyboard.
 func (b *Bot) SendKeyboard(ctx context.Context, chatID int64, text string, rows [][]Button) error {
 	return b.sendMessage(ctx, chatID, text, rows, "")

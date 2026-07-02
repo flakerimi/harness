@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/flakerimi/harness/agent"
 	"github.com/flakerimi/harness/app"
@@ -192,8 +193,12 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 		if err != nil {
 			return "sorry — I hit a setup error: " + err.Error()
 		}
+		// Keep a "typing…" indicator alive while the model works — reasoning
+		// models take several seconds, and Telegram clears the action after ~5s.
+		stopTyping := pulseTyping(ctx, bot, chatID)
 		bh := &agent.Collector{}
 		history, rerr := ag.Continue(ctx, sess.History, text, bh)
+		stopTyping()
 		sess.History = history
 		if serr := store.Save(sess); serr != nil {
 			fmt.Fprintln(os.Stderr, "warning: save:", serr)
@@ -415,6 +420,30 @@ func modelSuffix(model string) string {
 		return ""
 	}
 	return " (" + model + ")"
+}
+
+// pulseTyping shows the "typing…" indicator and re-sends it every 4s (Telegram
+// clears it after ~5s) until the returned stop func is called — so the chat
+// looks alive while a slow model generates. Errors are ignored: a missing
+// indicator must never affect the reply.
+func pulseTyping(ctx context.Context, bot *telegram.Bot, chatID int64) func() {
+	done := make(chan struct{})
+	go func() {
+		_ = bot.SendChatAction(ctx, chatID, "typing")
+		t := time.NewTicker(4 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				_ = bot.SendChatAction(ctx, chatID, "typing")
+			}
+		}
+	}()
+	return func() { close(done) }
 }
 
 // feedbackMinChars is the reply length above which 👍/👎 buttons are attached —
