@@ -20,7 +20,9 @@ npm run dev                              # http://localhost:5173
 In the app: enter the **API URL** (e.g. `http://localhost:8080`) and the
 **token**, Connect, then pick an identity + model and chat. Replies stream over
 SSE. The conversation is the same one the CLI/Telegram see (shared server-side
-state).
+state). The **tasks** button opens the background-task queue — queue work for
+the current identity, watch statuses update live, expand a job to read its
+result (execution needs `harness daemon` or `harness task drain`).
 
 ## Build
 
