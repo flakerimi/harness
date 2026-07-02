@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/flakerimi/harness/agent"
 	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/session"
+	"github.com/flakerimi/harness/task"
 	"github.com/flakerimi/harness/tool"
 )
 
@@ -182,5 +184,61 @@ func TestSessionsEndpoint(t *testing.T) {
 	srv.Handler().ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusOK || !strings.Contains(rec2.Body.String(), `"abc"`) {
 		t.Errorf("sessions endpoint = %d %q", rec2.Code, rec2.Body.String())
+	}
+}
+
+func TestTaskEndpoints(t *testing.T) {
+	srv := newTestServer(t)
+	srv.Tasks = task.NewStore(t.TempDir())
+	h := srv.Handler()
+
+	// Empty queue lists as [].
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/tasks", nil))
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Errorf("empty list = %d %q", rec.Code, rec.Body.String())
+	}
+
+	// Enqueue; empty profile falls back to the server default.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/tasks",
+		strings.NewReader(`{"prompt":"research X","deliver":"telegram:1"}`)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("enqueue = %d %q", rec.Code, rec.Body.String())
+	}
+	var created task.Task
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Profile != "personal" || created.Status != task.Queued {
+		t.Errorf("created = %+v", created)
+	}
+
+	// Fetch it back by id.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/tasks/"+created.ID, nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "research X") {
+		t.Errorf("show = %d %q", rec.Code, rec.Body.String())
+	}
+
+	// Bad enqueue → 400; unknown id → 404.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/tasks", strings.NewReader(`{"prompt":""}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("empty prompt = %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/tasks/nope", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("missing id = %d", rec.Code)
+	}
+
+	// Nil store → task routes absent; the request falls through to the index
+	// catch-all rather than a task listing.
+	srv2 := newTestServer(t)
+	rec = httptest.NewRecorder()
+	srv2.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/tasks", nil))
+	if strings.Contains(rec.Body.String(), `"status"`) || !strings.Contains(rec.Body.String(), "service") {
+		t.Errorf("nil store should not serve a task list, got %q", rec.Body.String())
 	}
 }

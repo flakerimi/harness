@@ -22,6 +22,7 @@ import (
 	"github.com/flakerimi/harness/agent"
 	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/session"
+	"github.com/flakerimi/harness/task"
 	"github.com/flakerimi/harness/tool"
 )
 
@@ -39,6 +40,7 @@ type Server struct {
 	Factory        func(ctx context.Context, profile, providerSlug, model string) (*agent.Agent, error)
 	Sessions       func(profile string) *session.Store
 	Profiles       func() []ProfileInfo
+	Tasks          *task.Store // background-task queue; nil disables /v1/tasks
 	DefaultProfile string
 	Token          string // when set, every /v1 request must present it (Bearer header or ?token=)
 }
@@ -55,6 +57,11 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/models", s.guard(s.handleModels))
 	mux.Handle("GET /v1/sessions", s.guard(s.handleSessions))
 	mux.Handle("GET /v1/sessions/{id}", s.guard(s.handleSessionHistory))
+	if s.Tasks != nil {
+		mux.Handle("GET /v1/tasks", s.guard(s.handleTasks))
+		mux.Handle("POST /v1/tasks", s.guard(s.handleTaskAdd))
+		mux.Handle("GET /v1/tasks/{id}", s.guard(s.handleTaskShow))
+	}
 	return cors(mux)
 }
 
@@ -62,8 +69,53 @@ func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"service":   "harness",
 		"auth":      s.Token != "",
-		"endpoints": []string{"POST /v1/chat", "GET /v1/profiles", "GET /v1/models", "GET /v1/sessions", "GET /v1/sessions/{id}", "GET /healthz"},
+		"endpoints": []string{"POST /v1/chat", "GET /v1/profiles", "GET /v1/models", "GET /v1/sessions", "GET /v1/sessions/{id}", "GET /v1/tasks", "POST /v1/tasks", "GET /v1/tasks/{id}", "GET /healthz"},
 	})
+}
+
+// handleTasks lists the background-task queue, newest last (store order).
+func (s *Server) handleTasks(w http.ResponseWriter, _ *http.Request) {
+	all, err := s.Tasks.List()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if all == nil {
+		all = []task.Task{}
+	}
+	writeJSON(w, http.StatusOK, all)
+}
+
+// handleTaskAdd enqueues a background job; the daemon's worker executes it.
+func (s *Server) handleTaskAdd(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Profile  string `json:"profile"`
+		Prompt   string `json:"prompt"`
+		Provider string `json:"provider"`
+		Deliver  string `json:"deliver"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		return
+	}
+	if req.Profile == "" {
+		req.Profile = s.DefaultProfile
+	}
+	t, err := s.Tasks.Enqueue(task.Task{Profile: req.Profile, Provider: req.Provider, Prompt: req.Prompt, Deliver: req.Deliver})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, t)
+}
+
+func (s *Server) handleTaskShow(w http.ResponseWriter, r *http.Request) {
+	t, err := s.Tasks.Get(r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "task not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
 }
 
 type chatRequest struct {

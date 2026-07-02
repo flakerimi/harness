@@ -21,6 +21,19 @@ export const getSessions = (base, token, profile) =>
 export const getHistory = (base, token, profile, id) =>
   getJSON(base, token, '/v1/sessions/' + encodeURIComponent(id) + '?profile=' + encodeURIComponent(profile))
 
+// Background tasks: list the queue, inspect one, enqueue one.
+export const getTasks = (base, token) => getJSON(base, token, '/v1/tasks')
+export const getTask = (base, token, id) => getJSON(base, token, '/v1/tasks/' + encodeURIComponent(id))
+export async function addTask(base, token, body) {
+  const resp = await fetch(trimBase(base) + '/v1/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify(body),
+  })
+  if (!resp.ok) throw new Error('HTTP ' + resp.status + ': ' + (await resp.text()))
+  return resp.json()
+}
+
 // chatStream POSTs a turn and invokes onEvent(type, data) for each SSE frame
 // (ready, text, tool_start, tool_result, route, usage, stop, error, done).
 export async function chatStream(base, token, body, onEvent, signal) {

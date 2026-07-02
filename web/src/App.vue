@@ -2,7 +2,7 @@
 import { ref, reactive, computed, nextTick, onMounted } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { getProfiles, getModels, getHistory, chatStream } from './api.js'
+import { getProfiles, getModels, getHistory, chatStream, getTasks, addTask } from './api.js'
 
 marked.setOptions({ breaks: true, gfm: true })
 
@@ -128,6 +128,58 @@ function onKey(e) {
   }
 }
 
+// ---- Background tasks -------------------------------------------------------
+
+const view = ref('chat') // 'chat' | 'tasks'
+const tasks = ref([])
+const taskPrompt = ref('')
+const taskBusy = ref(false)
+const taskError = ref('')
+const openTask = ref('') // expanded task id
+let taskTimer = null
+
+async function refreshTasks() {
+  try {
+    tasks.value = (await getTasks(conn.base, conn.token)).slice().reverse() // newest first
+    taskError.value = ''
+  } catch (e) {
+    taskError.value = String(e.message || e)
+  }
+}
+
+function showTasks() {
+  view.value = 'tasks'
+  refreshTasks()
+  // Poll while the panel is open so running jobs update live.
+  clearInterval(taskTimer)
+  taskTimer = setInterval(refreshTasks, 5000)
+}
+
+function showChat() {
+  view.value = 'chat'
+  clearInterval(taskTimer)
+  taskTimer = null
+}
+
+async function queueTask() {
+  const prompt = taskPrompt.value.trim()
+  if (!prompt || taskBusy.value) return
+  taskBusy.value = true
+  try {
+    await addTask(conn.base, conn.token, { profile: profile.value, prompt })
+    taskPrompt.value = ''
+    await refreshTasks()
+  } catch (e) {
+    taskError.value = String(e.message || e)
+  } finally {
+    taskBusy.value = false
+  }
+}
+
+function statusIcon(s) {
+  return { queued: '⏳', running: '▶', done: '✓', failed: '✗' }[s] || '·'
+}
+
 onMounted(() => {
   if (conn.token) connect()
 })
@@ -166,9 +218,37 @@ onMounted(() => {
           <option v-for="m in modelsForProvider" :key="m.id" :value="m.id">{{ m.label }}</option>
         </select>
         <input class="session" v-model="sessionId" @change="loadHistory" title="session" />
+        <button class="ghost" v-if="view === 'chat'" @click="showTasks" title="background tasks">tasks</button>
+        <button class="ghost" v-else @click="showChat" title="back to chat">chat</button>
       </div>
 
-      <div class="messages" ref="scroller">
+      <!-- Background tasks -->
+      <div v-if="view === 'tasks'" class="messages tasks">
+        <div class="taskform">
+          <textarea
+            v-model="taskPrompt"
+            rows="2"
+            placeholder="Queue background work for this identity — “research X and summarize”. The daemon runs it; results land here (and wherever it delivers)."
+          ></textarea>
+          <button @click="queueTask" :disabled="taskBusy || !taskPrompt.trim()">Queue</button>
+        </div>
+        <p v-if="taskError" class="err">{{ taskError }}</p>
+        <div v-for="t in tasks" :key="t.id" class="task" @click="openTask = openTask === t.id ? '' : t.id">
+          <div class="taskrow">
+            <span :class="['tstatus', t.status]">{{ statusIcon(t.status) }} {{ t.status }}</span>
+            <span class="tprompt">{{ t.prompt }}</span>
+            <span class="muted small">{{ t.profile }}</span>
+          </div>
+          <div v-if="openTask === t.id" class="tbody">
+            <p v-if="t.error" class="err">{{ t.error }}</p>
+            <div v-if="t.result" class="text md" v-html="md(t.result)"></div>
+            <p v-if="!t.result && !t.error" class="muted small">no result yet</p>
+          </div>
+        </div>
+        <p v-if="!tasks.length" class="muted small">No background tasks yet — queue one above, or ask the assistant to “work on this in the background”.</p>
+      </div>
+
+      <div v-if="view === 'chat'" class="messages" ref="scroller">
         <div v-for="(m, i) in messages" :key="i" :class="['msg', m.role]">
           <div class="who">{{ m.role === 'user' ? 'you' : 'morpheus' }}</div>
           <div v-if="m.role === 'user'" class="text">{{ m.text }}</div>
@@ -177,7 +257,7 @@ onMounted(() => {
         <p v-if="!messages.length" class="muted small">No messages yet — say hello.</p>
       </div>
 
-      <div class="composer">
+      <div v-if="view === 'chat'" class="composer">
         <textarea
           v-model="input"
           @keydown="onKey"

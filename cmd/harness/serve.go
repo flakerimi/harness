@@ -17,6 +17,7 @@ import (
 	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/server"
 	"github.com/flakerimi/harness/session"
+	"github.com/flakerimi/harness/task"
 )
 
 // runServe starts the HTTP+SSE server, so the same engine that powers the CLI
@@ -73,6 +74,7 @@ func buildAPIServer(o apiOptions) *server.Server {
 	return &server.Server{
 		DefaultProfile: activeProfile(),
 		Token:          o.Token,
+		Tasks:          task.NewStore(profile.TasksDir()),
 		Factory: func(ctx context.Context, profileName, provSlug, modelID string) (*agent.Agent, error) {
 			if provSlug == "" {
 				provSlug = o.Provider
