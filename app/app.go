@@ -34,7 +34,7 @@ type Spec struct {
 	Model     string
 	System    string
 	MaxTokens int
-	Root      string
+	Root      string // filesystem root for tools; "" = auto (the profile's workspace, else ".")
 	Profile   string
 	Tier      string
 	Route     bool
@@ -73,13 +73,33 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		model = pc.Model
 	}
 
+	// The identity's workspace — its persistent home for files. An explicit
+	// Root wins (a CLI run working in cwd); with none, a profile's surface is
+	// rooted in its workspace, so files persist across sessions and surfaces.
+	workspace := ""
+	if spec.Profile != "" {
+		workspace = profile.WorkspaceDir(spec.Profile)
+		if err := os.MkdirAll(workspace, 0o755); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: workspace:", err)
+			workspace = ""
+		}
+	}
+	root := spec.Root
+	if root == "" {
+		if workspace != "" {
+			root = workspace
+		} else {
+			root = "."
+		}
+	}
+
 	caps := []string{provider.CapTools, provider.CapCaching}
 	opts := agent.Options{
 		Model:         model,
 		System:        spec.System,
 		MaxTokens:     spec.MaxTokens,
 		Caps:          caps,
-		Env:           &tool.Env{Root: spec.Root},
+		Env:           &tool.Env{Root: root, Workspace: workspace},
 		CompactTokens: spec.Compact,
 		Critique:      spec.Critique,
 	}
@@ -208,6 +228,21 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 			}
 			opts.System += d
 		}
+	}
+
+	// Tell the identity where home is: files written under the workspace
+	// persist across sessions and surfaces.
+	if workspace != "" {
+		note := "Workspace: you have a persistent workspace directory for files (drafts, notes, projects); it survives across conversations."
+		if root == workspace {
+			note += " Filesystem tools operate inside it."
+		} else {
+			note += fmt.Sprintf(" Filesystem tools operate in the current working root; your workspace is at %s.", workspace)
+		}
+		if opts.System != "" {
+			opts.System += "\n\n"
+		}
+		opts.System += note
 	}
 
 	// Memory: inject the identity's durable facts + the remember tool. Only for

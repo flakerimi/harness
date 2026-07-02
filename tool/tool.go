@@ -76,9 +76,11 @@ func (r *Registry) All() []Tool {
 	return out
 }
 
-// Env is the mediated view of the world handed to a tool. Milestone 0 exposes
-// only a filesystem root; exec, network, and a permission callback land here
-// next, so tools never widen their own blast radius.
+// Env is the mediated view of the world handed to a tool. It exposes a
+// filesystem root and the identity's persistent workspace; exec, network, and
+// a permission callback land here next, so tools never widen their own blast
+// radius.
 type Env struct {
-	Root string // working-directory root for filesystem tools
+	Root      string // working-directory root for filesystem tools
+	Workspace string // the identity's persistent home for files ("" = none); on remote surfaces Root == Workspace
 }

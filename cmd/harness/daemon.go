@@ -21,7 +21,7 @@ func runDaemon(args []string) {
 	providerSlug := fs.String("provider", "claude", "default model provider")
 	model := fs.String("model", "", "default model id")
 	maxTokens := fs.Int("max-tokens", 4096, "max output tokens")
-	root := fs.String("root", ".", "workspace root for filesystem tools")
+	root := fs.String("root", "", "filesystem root for tools (default: the profile's workspace)")
 	bash := fs.Bool("bash", false, "enable the bash tool (trusted use only)")
 	compact := fs.Int("compact", 120000, "compaction token budget (0 disables)")
 	token := fs.String("token", "", "API bearer token (or $HARNESS_API_TOKEN; auto-generated)")

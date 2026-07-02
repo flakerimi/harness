@@ -29,7 +29,7 @@ func runServe(args []string) {
 	providerSlug := fs.String("provider", "mock", "default model provider")
 	model := fs.String("model", "", "explicit default model id")
 	maxTokens := fs.Int("max-tokens", 4096, "max output tokens")
-	root := fs.String("root", ".", "workspace root for filesystem tools")
+	root := fs.String("root", "", "filesystem root for tools (default: the profile's workspace)")
 	bash := fs.Bool("bash", false, "enable the bash tool (runs shell commands — trusted skills only)")
 	compact := fs.Int("compact", 120000, "summarize older turns once estimated tokens exceed this (0 disables)")
 	token := fs.String("token", "", "require this bearer token on /v1 (or $HARNESS_API_TOKEN; auto-generated if empty)")

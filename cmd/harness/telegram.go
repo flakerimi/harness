@@ -182,7 +182,7 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 			Model:     sess.Model,
 			System:    "You are a helpful assistant replying over Telegram. Keep replies concise and chat-friendly.",
 			MaxTokens: 4096,
-			Root:      ".",
+			Root:      "", // auto: the profile's workspace
 			Profile:   curProfile,
 			Tier:      "reasoning",
 			Route:     true,

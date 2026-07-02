@@ -410,6 +410,12 @@ func (a *Agent) env() *tool.Env {
 	return &tool.Env{Root: "."}
 }
 
+// Env exposes the mediated world the agent hands its tools — surfaces use it
+// to show where the agent is rooted (e.g. an identity's workspace).
+func (a *Agent) Env() *tool.Env {
+	return a.env()
+}
+
 func (a *Agent) strategy() ContextStrategy {
 	if a.opts.Context != nil {
 		return a.opts.Context

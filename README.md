@@ -242,7 +242,10 @@ harness chat -profile business                     # talk to the business identi
 harness -profile personal "what's on my calendar"  # uses the personal account
 ```
 
-Everything is per-identity, under `<config>/harness/profiles/<name>/`:
+Everything is per-identity, under `<config>/harness/profiles/<name>/`. On
+remote surfaces (daemon, Telegram, schedules) the identity's filesystem tools
+are rooted in its **workspace** — a persistent home for files that survives
+across sessions; a CLI run works in cwd (`-root`) with the workspace alongside.
 
 | Scoped per identity | Where |
 |---|---|
@@ -250,6 +253,7 @@ Everything is per-identity, under `<config>/harness/profiles/<name>/`:
 | Durable memory | `memory/` |
 | Learned skills | `skills/` |
 | Conversations | `sessions/` |
+| Workspace (persistent files: drafts, notes, projects) | `workspace/` |
 | Tools (MCP servers) | `mcp.json` (layered on the shared `mcp.json`) |
 
 Add an identity by dropping a `profiles/<name>.md` (persona + tier + delegation).

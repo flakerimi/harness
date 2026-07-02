@@ -73,11 +73,12 @@ func TestScopedDirsAreUnderProfile(t *testing.T) {
 	// isolated between identities (personal vs business).
 	base := DataDir("basecode")
 	for name, got := range map[string]string{
-		"auth":     AuthFile("basecode"),
-		"memory":   MemoryDir("basecode"),
-		"skills":   SkillsDir("basecode"),
-		"sessions": SessionsDir("basecode"),
-		"mcp":      MCPFile("basecode"),
+		"auth":      AuthFile("basecode"),
+		"memory":    MemoryDir("basecode"),
+		"skills":    SkillsDir("basecode"),
+		"sessions":  SessionsDir("basecode"),
+		"mcp":       MCPFile("basecode"),
+		"workspace": WorkspaceDir("basecode"),
 	} {
 		if !strings.HasPrefix(got, base) {
 			t.Errorf("%s dir %q not under profile data dir %q", name, got, base)

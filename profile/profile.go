@@ -101,6 +101,16 @@ func MCPFile(name string) string {
 	return filepath.Join(DataDir(name), "mcp.json")
 }
 
+// WorkspaceDir is the per-profile workspace — the identity's persistent home
+// for files: drafts, notes, projects. Unlike memory (facts) or sessions
+// (conversations), the workspace holds working artifacts that survive across
+// sessions and surfaces. Remote surfaces (daemon, Telegram, schedules) root
+// their filesystem tools here; a CLI run keeps cwd as its root and reaches the
+// workspace through tool.Env.Workspace.
+func WorkspaceDir(name string) string {
+	return filepath.Join(DataDir(name), "workspace")
+}
+
 // ScheduleDir is the shared directory for scheduled tasks. Scheduling spans
 // identities (each task names its own profile), so it lives at the base, not
 // under a single profile.

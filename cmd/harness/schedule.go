@@ -217,7 +217,7 @@ func runScheduledTask(ctx context.Context, t schedule.Task) {
 		Provider:  provSlug,
 		System:    "You are a helpful assistant.",
 		MaxTokens: 4096,
-		Root:      ".",
+		Root:      "", // auto: the profile's workspace
 		Profile:   t.Profile,
 		Tier:      "reasoning",
 		Route:     true,

@@ -114,7 +114,7 @@ func draftPersona(ctx context.Context, providerSlug string, a onboard.Answers) (
 		Provider:  providerSlug,
 		System:    onboard.WriterSystem,
 		MaxTokens: 1500,
-		Root:      ".",
+		Root:      "", // auto: the profile's workspace
 		Tier:      "reasoning",
 		Route:     true,
 	})

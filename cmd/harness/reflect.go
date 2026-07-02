@@ -42,7 +42,7 @@ func runReflect(args []string) {
 	ag, err := app.Build(ctx, app.Spec{
 		Provider:  *providerSlug,
 		MaxTokens: 4096,
-		Root:      ".",
+		Root:      "", // auto: the profile's workspace
 		Profile:   prof,
 		Tier:      "reasoning",
 		Route:     true,
