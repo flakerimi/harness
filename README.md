@@ -25,6 +25,8 @@ a **schedule**, and improves itself.
 | **Self-improvement** | writes its own skills (`learn_skill`); self-critiques answers (`-critique`); reflects on past chats into memory + skills (`harness reflect`) | `skill/`, `agent/`, `session/` |
 | **Sessions** | multi-turn conversations that persist across runs | `session/`, `harness chat` |
 | **Crons** | scheduled, proactive runs on a clock | `schedule/`, `harness schedule` |
+| **Hands** | a persistent per-identity workspace + read/write/edit/list file tools, writes behind a permission gate | `tool/`, `profile/` |
+| **Background work** | a persistent task queue — "do X, report when done", results delivered to your chat | `task/`, `harness task` |
 
 ## Why it's structured this way
 
@@ -349,8 +351,9 @@ repository, harness develops harness.
 
 ## Status
 
-The engine plus all six pillars: identities, memory, skills (+ self-learning
-and a git-backed registry), sessions, compaction, scheduling, an HTTP/SSE
+The engine plus all the pillars: identities, memory, skills (+ self-learning
+and a git-backed registry), sessions, compaction, scheduling, a background
+task queue, per-identity workspaces with gated file tools, an HTTP/SSE
 server, and a Telegram channel. Provider adapters for mock, Anthropic (API key +
 OAuth), and OpenAI-compatible (OpenAI, DeepSeek, Gemini, Kimi, Mistral, Qwen,
 OpenRouter, Fireworks, Together, xAI, Z.ai, MiMo, Apple, Ollama, LM Studio).
