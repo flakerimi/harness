@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -233,12 +235,57 @@ func TestTaskEndpoints(t *testing.T) {
 		t.Errorf("missing id = %d", rec.Code)
 	}
 
-	// Nil store → task routes absent; the request falls through to the index
-	// catch-all rather than a task listing.
+	// Nil store → task routes absent; unmatched paths are 404, not a listing.
 	srv2 := newTestServer(t)
 	rec = httptest.NewRecorder()
 	srv2.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/tasks", nil))
-	if strings.Contains(rec.Body.String(), `"status"`) || !strings.Contains(rec.Body.String(), "service") {
-		t.Errorf("nil store should not serve a task list, got %q", rec.Body.String())
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("nil store list = %d, want 404", rec.Code)
+	}
+}
+
+func TestPublicServesPublishedPages(t *testing.T) {
+	srv := newTestServer(t)
+	pub := t.TempDir()
+	srv.Public = pub
+	if err := os.MkdirAll(filepath.Join(pub, "reports"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pub, "reports", "brief.html"), []byte("<!doctype html><h1>The Brief</h1>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := srv.Handler()
+
+	// Published page is served, unauthenticated, with an HTML content type.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/reports/brief.html", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "The Brief") {
+		t.Errorf("published page = %d %q", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("content-type = %q", ct)
+	}
+
+	// "/" stays the service card; missing files 404; /v1 stays guarded JSON.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if !strings.Contains(rec.Body.String(), "service") {
+		t.Errorf("index = %q", rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/reports/nope.html", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("missing page = %d", rec.Code)
+	}
+
+	// Traversal cannot escape the pub dir.
+	secret := filepath.Join(pub, "..", "secret.txt")
+	os.WriteFile(secret, []byte("private"), 0o644)
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/reports/brief.html", nil)
+	req.URL.Path = "/../secret.txt"
+	h.ServeHTTP(rec, req)
+	if strings.Contains(rec.Body.String(), "private") {
+		t.Error("traversal must not escape the public dir")
 	}
 }

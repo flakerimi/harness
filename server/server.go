@@ -43,6 +43,12 @@ type Server struct {
 	Tasks          *task.Store // background-task queue; nil disables /v1/tasks
 	DefaultProfile string
 	Token          string // when set, every /v1 request must present it (Bearer header or ?token=)
+
+	// Public, when set, serves that directory's files at the server root —
+	// UNAUTHENTICATED. It's how the assistant publishes: write_file to the
+	// workspace's pub/ dir → the page is live at /<path>. Point it at a
+	// dedicated pub dir, never the whole workspace.
+	Public string
 }
 
 // Handler returns the HTTP routes, with CORS applied and /v1 token-gated.
@@ -65,7 +71,18 @@ func (s *Server) Handler() http.Handler {
 	return cors(mux)
 }
 
-func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request) {
+// handleIndex answers "/" with the service card; any other unmatched GET is
+// tried against the Public dir (published pages), 404 otherwise. http.Dir
+// refuses path traversal, so serving stays confined to Public.
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		if s.Public != "" {
+			http.FileServer(http.Dir(s.Public)).ServeHTTP(w, r)
+			return
+		}
+		http.NotFound(w, r)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"service":   "harness",
 		"auth":      s.Token != "",

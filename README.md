@@ -253,6 +253,12 @@ Auth: every `/v1` route needs the token (Bearer header, or `?token=` for
 EventSource). CORS is permitted (token-gated), so browser/desktop clients on
 other origins work. TLS is terminated by the reverse proxy in front.
 
+**Publishing:** the default identity's `workspace/pub/` dir is served at the
+server root, unauthenticated — so the assistant can `write_file` a styled
+`pub/reports/foo.html` and hand you `https://<host>/reports/foo.html` instead
+of flooding the chat (the `publish` skill encodes the habit). Anything under
+`pub/` is on the open internet; the rest of the workspace stays private.
+
 ### Web client
 
 A decoupled Vue 3 SPA lives in [`web/`](web/) — connect with the API URL +

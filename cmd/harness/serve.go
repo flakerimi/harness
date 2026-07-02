@@ -71,7 +71,7 @@ type apiOptions struct {
 
 // buildAPIServer wires the HTTP API (agent factory + session store + profiles).
 func buildAPIServer(o apiOptions) *server.Server {
-	return &server.Server{
+	srv := &server.Server{
 		DefaultProfile: activeProfile(),
 		Token:          o.Token,
 		Tasks:          task.NewStore(profile.TasksDir()),
@@ -102,6 +102,13 @@ func buildAPIServer(o apiOptions) *server.Server {
 		},
 		Profiles: profileInfos,
 	}
+	// Published pages: the default identity's workspace pub/ dir is served at
+	// the root — how the assistant shares a long report as a link instead of a
+	// wall of chat text.
+	if p := activeProfile(); p != "" {
+		srv.Public = filepath.Join(profile.WorkspaceDir(p), "pub")
+	}
+	return srv
 }
 
 // serveHTTP runs an HTTP server until ctx is cancelled, then shuts it down
