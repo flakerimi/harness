@@ -62,6 +62,9 @@ func main() {
 		case "schedule":
 			runSchedule(os.Args[2:])
 			return
+		case "task":
+			runTask(os.Args[2:])
+			return
 		case "serve":
 			runServe(os.Args[2:])
 			return

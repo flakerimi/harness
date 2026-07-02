@@ -189,6 +189,8 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 			Classify:  false,
 			Escalate:  true,
 			Compact:   o.Compact,
+			// Background work queued from this chat reports back to this chat.
+			TaskDeliver: "telegram:" + strconv.FormatInt(chatID, 10),
 		})
 		if err != nil {
 			return "sorry — I hit a setup error: " + err.Error()

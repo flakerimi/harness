@@ -25,6 +25,7 @@ import (
 	"github.com/flakerimi/harness/session"
 	"github.com/flakerimi/harness/skill"
 	"github.com/flakerimi/harness/subagent"
+	"github.com/flakerimi/harness/task"
 	"github.com/flakerimi/harness/tool"
 )
 
@@ -49,6 +50,11 @@ type Spec struct {
 	// prompt here. Nil allows writes (remote surfaces are sandboxed in the
 	// identity's workspace instead).
 	ConfirmWrite func(toolName, detail string) bool
+
+	// TaskDeliver is where a background task queued from this surface sends
+	// its result (e.g. "telegram:<chatID>" — the chat that asked). Empty keeps
+	// results in the store for `harness task show`.
+	TaskDeliver string
 }
 
 // memDigestCap bounds how many memories are injected into the system prompt;
@@ -295,6 +301,11 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		// Reflection: let the identity read its own past conversations, so it can
 		// review and learn from them (the reflect skill drives this).
 		toolReg.Register(session.NewReviewTool(session.NewStore(profile.SessionsDir(spec.Profile))))
+
+		// Background work: let the identity queue long jobs for the daemon's
+		// task worker instead of blocking the conversation; the result is
+		// delivered to this surface's deliver target when done.
+		toolReg.Register(task.NewEnqueueTool(task.NewStore(profile.TasksDir()), spec.Profile, spec.Provider, spec.TaskDeliver))
 	}
 
 	return agent.New(prov, toolReg, opts), nil

@@ -28,6 +28,8 @@ func runDaemon(args []string) {
 	open := fs.Bool("open", false, "API with NO auth (localhost only)")
 	schedInterval := fs.Duration("schedule-interval", time.Minute, "how often the scheduler checks for due tasks")
 	noSchedule := fs.Bool("no-schedule", false, "don't run the scheduler")
+	taskInterval := fs.Duration("task-interval", 3*time.Second, "how often the worker checks the background-task queue")
+	noTasks := fs.Bool("no-tasks", false, "don't run the background-task worker")
 	telegramOn := fs.Bool("telegram", false, "also run the Telegram bot ($TELEGRAM_BOT_TOKEN)")
 	tgProfile := fs.String("telegram-profile", "", "default identity for the Telegram bot")
 	tgAllow := fs.String("allow", "", "Telegram allowlist (comma-separated chat ids)")
@@ -66,6 +68,12 @@ func runDaemon(args []string) {
 	// Scheduler (proactive tasks).
 	if !*noSchedule {
 		run("scheduler", func() { runScheduler(ctx, *schedInterval) })
+	}
+
+	// Background-task worker — drains the queue behind the background_task
+	// tool and `harness task add`.
+	if !*noTasks {
+		run("tasks", func() { runTaskWorker(ctx, *taskInterval, *providerSlug, *compact) })
 	}
 
 	// Telegram channel (optional).

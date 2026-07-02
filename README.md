@@ -117,6 +117,7 @@ harness chat                  # multi-turn conversation, persisted per identity
 harness serve                 # HTTP+SSE server (POST /v1/chat)
 harness channel telegram ...  # reach the assistant from Telegram
 harness schedule add ...      # proactive scheduled tasks
+harness task add ...          # queue background work ("do X, report when done")
 harness profiles              # list identities
 harness skills                # list skills (incl. the identity's learned ones)
 harness skills search <q>     # find skills in the git registry
@@ -163,10 +164,30 @@ output streams to stdout by default; `-deliver telegram:<chatID>` (with
 `$TELEGRAM_BOT_TOKEN` set) also pushes it to your phone — the wire that turns a
 scheduled run into a proactive message.
 
+### Background tasks — work now, off your critical path
+
+Where the schedule fires on a clock, the task queue fires immediately — in the
+background. Queue from the CLI, or let the **agent queue work for itself**: the
+`background_task` tool lets it say "I'll work on this and get back to you" in a
+chat, and the daemon's worker runs the job as the same identity (its memory,
+skills, workspace) and delivers the result back to the chat that asked.
+
+```sh
+harness task add -profile personal -deliver telegram:<chatID> \
+  "research X in depth and write the brief to workspace:briefs/x.md"
+harness task list
+harness task show <id>       # status + stored result
+harness task drain           # execute queued jobs now (no daemon needed)
+```
+
+Jobs persist as JSON; a daemon restart re-queues anything caught mid-run.
+Failures are delivered too, so the asker is never left waiting on silence.
+
 ### Daemon — one background process
 
-`harness daemon` runs the HTTP API + scheduler + (optionally) the Telegram bot
-together under one graceful shutdown — the thing you deploy and leave running.
+`harness daemon` runs the HTTP API + scheduler + task worker + (optionally) the
+Telegram bot together under one graceful shutdown — the thing you deploy and
+leave running.
 
 ```sh
 harness daemon -provider claude                       # API + scheduler

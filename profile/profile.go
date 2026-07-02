@@ -118,6 +118,13 @@ func ScheduleDir() string {
 	return filepath.Join(DataDir(""), "schedule")
 }
 
+// TasksDir is the shared directory for the background-task queue. Like the
+// schedule, it spans identities (each job names its own profile) and one
+// daemon worker drains it, so it lives at the base.
+func TasksDir() string {
+	return filepath.Join(DataDir(""), "tasks")
+}
+
 // Dirs returns the directories scanned for *.md profile files: a project-local
 // ./profiles, plus $HARNESS_PROFILES_DIR (or <user-config-dir>/harness/profiles).
 func Dirs() []string {
