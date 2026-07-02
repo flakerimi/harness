@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -253,8 +257,9 @@ func (h *captureHandler) OnText(delta string) {
 	h.text.WriteString(delta)
 }
 
-// deliver sends a scheduled task's output to a channel target of the form
-// "kind:dest" — today only "telegram:<chatID>". Empty text is a no-op.
+// deliver sends a scheduled/background task's output to a channel target of
+// the form "kind:dest" — "telegram:<chatID>", "webhook:<url>", or any kind a
+// plugin advertises. Empty text is a no-op.
 func deliver(ctx context.Context, target, text string) error {
 	if strings.TrimSpace(text) == "" {
 		return nil
@@ -274,7 +279,35 @@ func deliver(ctx context.Context, target, text string) error {
 			return fmt.Errorf("telegram chat id %q: %w", dest, err)
 		}
 		return telegram.New(tok).Send(ctx, chatID, text)
+	case "webhook":
+		return deliverWebhook(ctx, dest, text)
 	default:
-		return fmt.Errorf("unknown deliver kind %q (supported: telegram)", kind)
+		return fmt.Errorf("unknown deliver kind %q (supported: telegram, webhook)", kind)
 	}
+}
+
+// deliverWebhook POSTs the text to an incoming-webhook URL as JSON. The payload
+// carries both "text" (Slack, Mattermost, Teams) and "content" (Discord) keys —
+// each service reads its own and ignores the other, so one kind covers them all.
+func deliverWebhook(ctx context.Context, url, text string) error {
+	payload, err := json.Marshal(map[string]string{"text": text, "content": text})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
+		return fmt.Errorf("webhook %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	return nil
 }
