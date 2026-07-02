@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Responder turns an inbound message (from a chat) into a reply. Returning an
@@ -171,23 +172,79 @@ func (b *Bot) SendMarkdown(ctx context.Context, chatID int64, md string, rows []
 	return nil
 }
 
+// telegramMaxUnits is our per-message budget under Telegram's hard sendMessage
+// limit of 4096 UTF-16 code units — anything longer is rejected with 400
+// "message is too long", which silently ate long task deliveries.
+const telegramMaxUnits = 4000
+
 // sendMessage is the shared sendMessage call: optional inline keyboard and
-// parse mode ("" = plain, "HTML", "MarkdownV2"). Empty text is a no-op.
+// parse mode ("" = plain, "HTML", "MarkdownV2"). Empty text is a no-op. Long
+// text is split into chunks (preferring line breaks) so a lengthy reply or a
+// delivered task result is never dropped; the keyboard rides the last chunk.
 func (b *Bot) sendMessage(ctx context.Context, chatID int64, text string, rows [][]Button, parseMode string) error {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
-	q := url.Values{}
-	q.Set("chat_id", strconv.FormatInt(chatID, 10))
-	q.Set("text", text)
-	if parseMode != "" {
-		q.Set("parse_mode", parseMode)
+	chunks := splitMessage(text, telegramMaxUnits)
+	for i, chunk := range chunks {
+		q := url.Values{}
+		q.Set("chat_id", strconv.FormatInt(chatID, 10))
+		q.Set("text", chunk)
+		if parseMode != "" {
+			q.Set("parse_mode", parseMode)
+		}
+		if i == len(chunks)-1 {
+			if err := setMarkup(q, rows); err != nil {
+				return err
+			}
+		}
+		if _, err := b.call(ctx, "sendMessage", q); err != nil {
+			return err
+		}
 	}
-	if err := setMarkup(q, rows); err != nil {
-		return err
+	return nil
+}
+
+// splitMessage cuts text into pieces of at most maxUnits UTF-16 code units
+// (Telegram's unit of account — astral runes like emoji count as two),
+// breaking at the last newline in the window when one exists past its middle,
+// else the last space, else a hard cut.
+func splitMessage(s string, maxUnits int) []string {
+	var chunks []string
+	for s != "" {
+		units, cut := 0, 0
+		lastNL, lastSP := -1, -1
+		for i, r := range s {
+			u := 1
+			if r > 0xFFFF {
+				u = 2
+			}
+			if units+u > maxUnits {
+				break
+			}
+			units += u
+			cut = i + utf8.RuneLen(r)
+			switch r {
+			case '\n':
+				lastNL = cut
+			case ' ':
+				lastSP = cut
+			}
+		}
+		if cut >= len(s) {
+			chunks = append(chunks, s)
+			break
+		}
+		end := cut
+		if lastNL > cut/2 {
+			end = lastNL
+		} else if lastSP > cut/2 {
+			end = lastSP
+		}
+		chunks = append(chunks, strings.TrimRight(s[:end], "\n "))
+		s = strings.TrimLeft(s[end:], "\n ")
 	}
-	_, err := b.call(ctx, "sendMessage", q)
-	return err
+	return chunks
 }
 
 // EditMessage replaces a message's text and inline keyboard in place — used to

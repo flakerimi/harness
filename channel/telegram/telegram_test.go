@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -152,5 +153,76 @@ func TestRunDispatchesAndReplies(t *testing.T) {
 	defer mu.Unlock()
 	if len(sent) != 1 || !strings.Contains(sent[0], "Ada said ping in 7") {
 		t.Errorf("unexpected sent messages: %#v", sent)
+	}
+}
+
+func TestSplitMessage(t *testing.T) {
+	// Short text: one chunk, untouched.
+	if got := splitMessage("hello", 4000); len(got) != 1 || got[0] != "hello" {
+		t.Errorf("short = %q", got)
+	}
+
+	// Long text splits, preferring line boundaries, nothing lost.
+	var b strings.Builder
+	for i := range 400 {
+		fmt.Fprintf(&b, "line %03d: some meaningful content here\n", i)
+	}
+	chunks := splitMessage(b.String(), 4000)
+	if len(chunks) < 2 {
+		t.Fatalf("long text should split, got %d chunk(s)", len(chunks))
+	}
+	for i, c := range chunks {
+		if n := utf16Len(c); n > 4000 {
+			t.Errorf("chunk %d is %d units", i, n)
+		}
+		if i < len(chunks)-1 && !strings.HasSuffix(c, "here") {
+			t.Errorf("chunk %d should end at a line boundary: …%q", i, c[len(c)-20:])
+		}
+	}
+	if joined := strings.Join(chunks, "\n"); !strings.Contains(joined, "line 000") || !strings.Contains(joined, "line 399") {
+		t.Error("content lost in split")
+	}
+
+	// Emoji count as two units — a chunk of 3000 emoji must still fit.
+	chunks = splitMessage(strings.Repeat("🚀", 3000), 4000)
+	for i, c := range chunks {
+		if n := utf16Len(c); n > 4000 {
+			t.Errorf("emoji chunk %d is %d units", i, n)
+		}
+	}
+}
+
+func utf16Len(s string) int {
+	n := 0
+	for _, r := range s {
+		n++
+		if r > 0xFFFF {
+			n++
+		}
+	}
+	return n
+}
+
+func TestLongSendIsChunkedNeverDropped(t *testing.T) {
+	var texts []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		texts = append(texts, r.Form.Get("text"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{}}`))
+	}))
+	defer srv.Close()
+
+	long := strings.Repeat("research finding paragraph.\n", 600) // ~16k chars — the bug that ate task deliveries
+	if err := botTo(srv.URL, "T").Send(context.Background(), 7, long); err != nil {
+		t.Fatal(err)
+	}
+	if len(texts) < 4 {
+		t.Errorf("expected several sendMessage calls, got %d", len(texts))
+	}
+	for i, tx := range texts {
+		if utf16Len(tx) > 4096 {
+			t.Errorf("call %d over Telegram's limit: %d", i, utf16Len(tx))
+		}
 	}
 }
