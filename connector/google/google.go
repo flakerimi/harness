@@ -47,7 +47,7 @@ func (c *Connector) Status(context.Context) connector.Status {
 	if _, err := c.store.Load("google"); err != nil {
 		return connector.Status{Connected: false, Detail: "not logged in — run: harness login -provider google"}
 	}
-	return connector.Status{Connected: true, Detail: "calendar + gmail (read + draft)"}
+	return connector.Status{Connected: true, Detail: "calendar + gmail (read + draft + send)"}
 }
 
 func (c *Connector) Tools(context.Context) ([]tool.Tool, error) {
@@ -62,6 +62,7 @@ func (c *Connector) Tools(context.Context) ([]tool.Tool, error) {
 		&gmailListTool{c: c},
 		&gmailGetTool{c: c},
 		&gmailDraftTool{c: c},
+		&gmailSendTool{c: c},
 	}, nil
 }
 
@@ -568,6 +569,61 @@ func (t *gmailDraftTool) Run(ctx context.Context, input json.RawMessage, _ *tool
 	}
 	_ = json.Unmarshal(body, &draft)
 	return tool.Result{Content: fmt.Sprintf("created draft %s to %s — review and send it in Gmail", orDefault(draft.ID, "(saved)"), args.To)}, nil
+}
+
+type gmailSendTool struct{ c *Connector }
+
+func (gmailSendTool) Spec() tool.Spec {
+	return tool.Spec{
+		Name:        "gmail_send",
+		Description: "Send an email immediately via Gmail — it goes out, this is NOT a draft. Use only when the user has clearly asked to send (otherwise prefer gmail_create_draft). For a reply, pass thread_id and in_reply_to from gmail_get_message so it threads.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"to":          map[string]any{"type": "string", "description": "Recipient email address."},
+				"subject":     map[string]any{"type": "string", "description": "Subject line."},
+				"body":        map[string]any{"type": "string", "description": "Plain-text body of the email."},
+				"thread_id":   map[string]any{"type": "string", "description": "Optional Gmail thread id (from gmail_get_message) to send a reply into its thread."},
+				"in_reply_to": map[string]any{"type": "string", "description": "Optional Message-ID of the message being replied to, for correct threading."},
+			},
+			"required": []string{"to", "subject", "body"},
+		},
+	}
+}
+
+func (t *gmailSendTool) Run(ctx context.Context, input json.RawMessage, _ *tool.Env) (tool.Result, error) {
+	var args struct {
+		To        string `json:"to"`
+		Subject   string `json:"subject"`
+		Body      string `json:"body"`
+		ThreadID  string `json:"thread_id"`
+		InReplyTo string `json:"in_reply_to"`
+	}
+	if err := json.Unmarshal(input, &args); err != nil {
+		return tool.Result{Content: "invalid input: " + err.Error(), IsError: true}, nil
+	}
+	if strings.TrimSpace(args.To) == "" || strings.TrimSpace(args.Subject) == "" || strings.TrimSpace(args.Body) == "" {
+		return tool.Result{Content: "to, subject, and body are all required", IsError: true}, nil
+	}
+
+	// The send endpoint takes a Message resource directly (raw + optional thread).
+	msg := map[string]any{"raw": base64.URLEncoding.EncodeToString([]byte(buildRawMessage(args.To, args.Subject, args.Body, args.InReplyTo)))}
+	if args.ThreadID != "" {
+		msg["threadId"] = args.ThreadID
+	}
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return tool.Result{Content: err.Error(), IsError: true}, nil
+	}
+	body, err := t.c.post(ctx, "/gmail/v1/users/me/messages/send", payload)
+	if err != nil {
+		return tool.Result{Content: err.Error(), IsError: true}, nil
+	}
+	var sent struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &sent)
+	return tool.Result{Content: fmt.Sprintf("sent email to %s (id %s)", args.To, orDefault(sent.ID, "?"))}, nil
 }
 
 // buildRawMessage assembles an RFC 2822 message for the Gmail drafts API. The

@@ -289,6 +289,6 @@ The engine plus all six pillars: identities, memory, skills (+ self-learning
 and a git-backed registry), sessions, compaction, scheduling, an HTTP/SSE
 server, and a Telegram channel. Provider adapters for mock, Anthropic (API key +
 OAuth), and OpenAI-compatible (OpenAI, DeepSeek, Gemini, Ollama, LM Studio).
-Connectors: native tools, MCP, and Google Calendar + Gmail (read + draft).
+Connectors: native tools, MCP, and Google Calendar + Gmail (read + draft + send).
 
 Next: more channels (Slack), and Gmail send (drafting ships today).

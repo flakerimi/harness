@@ -92,8 +92,8 @@ func TestStatusAndToolsGate(t *testing.T) {
 	if !c.Status(context.Background()).Connected {
 		t.Error("should be connected after credentials saved")
 	}
-	if ts, _ := c.Tools(context.Background()); len(ts) != 5 {
-		t.Errorf("want 5 tools (calendar + gmail read/draft) after login, got %d", len(ts))
+	if ts, _ := c.Tools(context.Background()); len(ts) != 6 {
+		t.Errorf("want 6 tools (calendar + gmail read/draft/send) after login, got %d", len(ts))
 	}
 }
 
@@ -155,6 +155,49 @@ func TestGmailDraftTool(t *testing.T) {
 		if !strings.Contains(string(rawMsg), want) {
 			t.Errorf("raw message missing %q:\n%s", want, rawMsg)
 		}
+	}
+}
+
+func TestGmailSendTool(t *testing.T) {
+	var gotPath string
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"m42","threadId":"t9","labelIds":["SENT"]}`))
+	}))
+	defer srv.Close()
+
+	c := connWithServer(t, srv.URL)
+	in, _ := json.Marshal(map[string]any{
+		"to": "orjeta.r@tpr.al", "subject": "Re: Meeting", "body": "On my way.",
+		"thread_id": "t9", "in_reply_to": "<abc@mail.gmail.com>",
+	})
+	res, err := (&gmailSendTool{c: c}).Run(context.Background(), in, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError || !strings.Contains(res.Content, "sent email") || !strings.Contains(res.Content, "m42") {
+		t.Fatalf("send result = %q err=%v", res.Content, res.IsError)
+	}
+	if gotPath != "/gmail/v1/users/me/messages/send" {
+		t.Fatalf("wrong path: %s", gotPath)
+	}
+	// Message resource is posted directly (raw + threadId, not wrapped in "message").
+	var payload struct {
+		Raw      string `json:"raw"`
+		ThreadID string `json:"threadId"`
+	}
+	if err := json.Unmarshal(gotBody, &payload); err != nil {
+		t.Fatalf("payload parse: %v", err)
+	}
+	if payload.ThreadID != "t9" || payload.Raw == "" {
+		t.Errorf("payload wrong: %+v", payload)
+	}
+	raw, _ := base64.URLEncoding.DecodeString(payload.Raw)
+	if !strings.Contains(string(raw), "To: orjeta.r@tpr.al") || !strings.Contains(string(raw), "In-Reply-To:") {
+		t.Errorf("raw message missing headers:\n%s", raw)
 	}
 }
 
