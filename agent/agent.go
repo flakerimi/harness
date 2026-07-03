@@ -145,6 +145,17 @@ func (a *Agent) Continue(ctx context.Context, history []provider.Message, userIn
 
 		msgs = append(msgs, assistant)
 		if stop != provider.StopToolUse {
+			// A tool call clipped by the output-token limit is not a final
+			// answer: the arguments never finished streaming (they don't even
+			// parse). Answer each clipped call with an error the model can act
+			// on — write less per call, append in pieces — and keep looping,
+			// instead of returning a half-turn with dangling tool calls.
+			if stop == provider.StopMaxTokens {
+				if clipped := truncatedToolResults(assistant); len(clipped) > 0 {
+					msgs = append(msgs, provider.Message{Role: "tool", Content: clipped})
+					continue
+				}
+			}
 			// Self-critique: before accepting a final answer, optionally have a
 			// critic check it. If it finds concrete problems, feed them back and
 			// loop once more to revise — bounded by MaxCritique.
@@ -377,6 +388,26 @@ func (a *Agent) stream(ctx context.Context, msgs []provider.Message, model strin
 		stop = provider.StopEndTurn
 	}
 	return provider.Message{Role: "assistant", Content: blocks}, stop, nil
+}
+
+// truncatedToolResults answers every tool call in a max_tokens-clipped
+// assistant message with an actionable error result.
+func truncatedToolResults(assistant provider.Message) []provider.Block {
+	var out []provider.Block
+	for _, b := range assistant.Content {
+		if b.Type != provider.BlockToolUse || b.ToolUse == nil {
+			continue
+		}
+		out = append(out, provider.Block{
+			Type: provider.BlockToolResult,
+			ToolResult: &provider.ToolResultBlock{
+				ToolUseID: b.ToolUse.ID,
+				Content:   "tool call truncated: the output-token limit cut this call's arguments before they finished. Send less content per call — e.g. write the file in sections: write_file the first part, then write_file with append:true for each further part.",
+				IsError:   true,
+			},
+		})
+	}
+	return out
 }
 
 func (a *Agent) runTools(ctx context.Context, assistant provider.Message, h Handler) []provider.Block {

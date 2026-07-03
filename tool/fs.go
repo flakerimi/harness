@@ -55,7 +55,7 @@ type WriteFile struct{}
 func (WriteFile) Spec() Spec {
 	return Spec{
 		Name:        "write_file",
-		Description: "Create or overwrite a UTF-8 text file (parent dirs are created). Paths are relative to the working root; prefix with \"workspace:\" to write into your persistent workspace instead.",
+		Description: "Create or overwrite a UTF-8 text file (parent dirs are created); set append to add to the end instead — write large files in sections across several calls. Paths are relative to the working root; prefix with \"workspace:\" to write into your persistent workspace instead.",
 		Writes:      true,
 		InputSchema: map[string]any{
 			"type": "object",
@@ -66,7 +66,11 @@ func (WriteFile) Spec() Spec {
 				},
 				"content": map[string]any{
 					"type":        "string",
-					"description": "The full file content to write.",
+					"description": "The content to write (or append).",
+				},
+				"append": map[string]any{
+					"type":        "boolean",
+					"description": "Append to the file instead of overwriting — for writing big files in pieces.",
 				},
 			},
 			"required": []string{"path", "content"},
@@ -78,6 +82,7 @@ func (WriteFile) Run(ctx context.Context, input json.RawMessage, env *Env) (Resu
 	var args struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
+		Append  bool   `json:"append"`
 	}
 	if err := json.Unmarshal(input, &args); err != nil {
 		return Result{Content: "invalid input: " + err.Error(), IsError: true}, nil
@@ -91,6 +96,18 @@ func (WriteFile) Run(ctx context.Context, input json.RawMessage, env *Env) (Resu
 	}
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return Result{Content: err.Error(), IsError: true}, nil
+	}
+	if args.Append {
+		f, err := os.OpenFile(full, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return Result{Content: err.Error(), IsError: true}, nil
+		}
+		defer f.Close()
+		if _, err := f.WriteString(args.Content); err != nil {
+			return Result{Content: err.Error(), IsError: true}, nil
+		}
+		fi, _ := f.Stat()
+		return Result{Content: fmt.Sprintf("appended %d bytes to %s (now %d bytes)", len(args.Content), args.Path, fi.Size())}, nil
 	}
 	if err := os.WriteFile(full, []byte(args.Content), 0o644); err != nil {
 		return Result{Content: err.Error(), IsError: true}, nil

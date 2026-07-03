@@ -221,7 +221,7 @@ func runScheduledTask(ctx context.Context, t schedule.Task) {
 	ag, err := app.Build(ctx, app.Spec{
 		Provider:  provSlug,
 		System:    "You are a helpful assistant.",
-		MaxTokens: 4096,
+		MaxTokens: 8192,
 		Root:      "", // auto: the profile's workspace
 		Profile:   t.Profile,
 		Tier:      "reasoning",
@@ -240,8 +240,13 @@ func runScheduledTask(ctx context.Context, t schedule.Task) {
 	}
 	fmt.Println()
 	if t.Deliver != "" {
-		if err := deliver(ctx, t.Deliver, strings.TrimSpace(h.text.String())); err != nil {
+		text := strings.TrimSpace(h.text.String())
+		if err := deliver(ctx, t.Deliver, text); err != nil {
 			fmt.Fprintln(os.Stderr, "warning: deliver:", err)
+		} else if text != "" {
+			// Proof of delivery in the log — a sent-but-vanished message
+			// should never be a mystery.
+			fmt.Fprintf(os.Stderr, "deliver: sent %d chars to %s\n", len(text), t.Deliver)
 		}
 	}
 }

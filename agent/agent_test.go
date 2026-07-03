@@ -242,3 +242,45 @@ func TestTurnBudgetWrapsUpInsteadOfErroring(t *testing.T) {
 		t.Errorf("history should end with the wrap-up answer, ends with %q", last.Role)
 	}
 }
+
+// clippedProvider simulates an output-token limit cutting a tool call's
+// arguments: turn 1 emits a truncated tool call with stop max_tokens; after
+// receiving the error result, turn 2 answers with text.
+type clippedProvider struct{ turn int }
+
+func (c *clippedProvider) Name() string { return "clipped" }
+
+func (c *clippedProvider) Stream(_ context.Context, req provider.Request, emit func(provider.Event)) error {
+	defer func() { c.turn++ }()
+	if c.turn == 0 {
+		emit(provider.Event{Type: provider.EventToolUseStart, Index: 0, ToolUseID: "w1", ToolName: "echo"})
+		emit(provider.Event{Type: provider.EventToolUseDelta, Index: 0, InputDelta: `{"msg":"a huge unfinished...`})
+		emit(provider.Event{Type: provider.EventStop, StopReason: provider.StopMaxTokens})
+		return nil
+	}
+	// The model must have been told its call was truncated.
+	last := req.Messages[len(req.Messages)-1]
+	for _, b := range last.Content {
+		if b.ToolResult != nil && b.ToolResult.IsError && strings.Contains(b.ToolResult.Content, "truncated") {
+			emit(provider.Event{Type: provider.EventTextDelta, TextDelta: "adapted: writing in sections"})
+			emit(provider.Event{Type: provider.EventStop, StopReason: provider.StopEndTurn})
+			return nil
+		}
+	}
+	emit(provider.Event{Type: provider.EventTextDelta, TextDelta: "never told about truncation"})
+	emit(provider.Event{Type: provider.EventStop, StopReason: provider.StopEndTurn})
+	return nil
+}
+
+func TestTruncatedToolCallGetsFeedbackAndLoopContinues(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&echoTool{})
+	var out strings.Builder
+	_, err := New(&clippedProvider{}, reg, Options{}).Continue(context.Background(), nil, "write it", &collectHandler{out: &out})
+	if err != nil {
+		t.Fatalf("clipped tool call should recover, got %v", err)
+	}
+	if !strings.Contains(out.String(), "adapted") {
+		t.Errorf("model was not fed the truncation error: %q", out.String())
+	}
+}

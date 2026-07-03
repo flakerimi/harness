@@ -8,6 +8,10 @@ Publishing is just writing a file:
 
 1. **Write a complete, standalone HTML page** with write_file to
    `pub/<section>/<slug>.html` (e.g. `pub/reports/agent-harness-landscape.html`).
+   - **Big pages: write in sections.** One giant write_file call can get
+     truncated by the output-token limit. Write the head + opening in the
+     first call, then each further section with `append: true`, closing tags
+     in the last call. Verify with read_file or list_dir if unsure.
    - Kebab-case slug, descriptive, dated if it may recur
      (`pub/reports/2026-07-03-market-scan.html`).
    - Self-contained: inline CSS, no external scripts. Make it *readable* —

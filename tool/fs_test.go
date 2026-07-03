@@ -110,3 +110,21 @@ func TestWriteToolsAreMarkedAsWrites(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteFileAppendBuildsInSections(t *testing.T) {
+	env := &Env{Root: t.TempDir()}
+	run(t, WriteFile{}, env, map[string]any{"path": "pub/big.html", "content": "<html><body>"})
+	run(t, WriteFile{}, env, map[string]any{"path": "pub/big.html", "content": "<h1>part two</h1>", "append": true})
+	res := run(t, WriteFile{}, env, map[string]any{"path": "pub/big.html", "content": "</body></html>", "append": true})
+	if res.IsError || !strings.Contains(res.Content, "appended") {
+		t.Fatalf("append: %+v", res)
+	}
+	data, _ := os.ReadFile(filepath.Join(env.Root, "pub", "big.html"))
+	if string(data) != "<html><body><h1>part two</h1></body></html>" {
+		t.Errorf("assembled = %q", data)
+	}
+	// append to a fresh path creates it
+	if res := run(t, WriteFile{}, env, map[string]any{"path": "new.txt", "content": "x", "append": true}); res.IsError {
+		t.Errorf("append-create: %+v", res)
+	}
+}

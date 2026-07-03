@@ -124,7 +124,7 @@ func executeTask(ctx context.Context, store *task.Store, t *task.Task, defaultPr
 	ag, err := app.Build(ctx, app.Spec{
 		Provider:  prov,
 		System:    "You are executing a queued background task. Work it to completion; your final message is the deliverable.",
-		MaxTokens: 4096,
+		MaxTokens: 8192,
 		Profile:   t.Profile,
 		Tier:      "reasoning",
 		Route:     true,
@@ -149,6 +149,8 @@ func executeTask(ctx context.Context, store *task.Store, t *task.Task, defaultPr
 		}
 		if derr := deliver(ctx, t.Deliver, text); derr != nil {
 			fmt.Fprintln(os.Stderr, "task: deliver:", derr)
+		} else if strings.TrimSpace(text) != "" {
+			fmt.Fprintf(os.Stderr, "task: delivered %d chars to %s\n", len(text), t.Deliver)
 		}
 	}
 	if err != nil {
