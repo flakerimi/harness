@@ -67,7 +67,10 @@ func googleConnectButton(google *auth.GoogleRemote, profileName string, chatID i
 	if err != nil {
 		return "couldn't start the Google connect: " + err.Error(), nil
 	}
-	msg := fmt.Sprintf("Connecting Google to identity %q — tap the button, sign in, allow. The link is valid for 15 minutes.", profileName)
+	// Include the raw link too: Telegram's in-app browser has no Google
+	// session (and Google may refuse OAuth in embedded browsers), so the user
+	// can long-press → open in their real browser, or copy it there.
+	msg := fmt.Sprintf("Connecting Google to identity %q — tap the button, sign in, allow (valid 15 minutes).\n\nIf it opens inside Telegram where you're not signed in: use ⋯ → Open in Browser, or copy this link:\n%s", profileName, u)
 	return msg, [][]telegram.Button{{{Text: "🔗 Connect Google", URL: u}}}
 }
 
