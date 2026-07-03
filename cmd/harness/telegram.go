@@ -252,6 +252,21 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 		case data == "back":
 			_ = bot.EditMessage(ctx, chatID, messageID, "Pick a provider:", providerMenuKeyboard())
 			_ = bot.AnswerCallback(ctx, callbackID, "")
+		case strings.HasPrefix(data, "ig:"):
+			// Integrations menu tap: swap the menu for the live connect button.
+			switch strings.TrimPrefix(data, "ig:") {
+			case "google":
+				msg, kb := googleConnectButton(o.Google, identities.get(chatID, defaultProfile), chatID)
+				if kb == nil {
+					_ = bot.AnswerCallback(ctx, callbackID, "")
+					_ = bot.EditMessage(ctx, chatID, messageID, msg, nil)
+					return
+				}
+				_ = bot.EditMessage(ctx, chatID, messageID, msg, kb)
+				_ = bot.AnswerCallback(ctx, callbackID, "")
+			default:
+				_ = bot.AnswerCallback(ctx, callbackID, "unknown integration")
+			}
 		case strings.HasPrefix(data, "p:"):
 			slug := strings.TrimPrefix(data, "p:")
 			_ = bot.EditMessage(ctx, chatID, messageID, "Model for "+slug+":", modelMenuKeyboard(slug))

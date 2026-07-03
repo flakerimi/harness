@@ -33,26 +33,42 @@ func integrationCommand(ctx context.Context, bot *telegram.Bot, google *auth.Goo
 	}
 	switch arg {
 	case "google":
-		if google == nil {
-			return "Google connect isn't configured on this server — it needs GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (a Web OAuth client) and HARNESS_PUBLIC_URL.", true
+		msg, kb := googleConnectButton(google, profileName, chatID)
+		if kb == nil {
+			return msg, true
 		}
-		authStore := auth.NewStore(profile.AuthFile(profileName))
-		u, err := google.Start(authStore, "telegram:"+strconv.FormatInt(chatID, 10))
-		if err != nil {
-			return "couldn't start the Google connect: " + err.Error(), true
-		}
-		kb := [][]telegram.Button{{{Text: "🔗 Connect Google", URL: u}}}
-		msg := fmt.Sprintf("Connecting Google to identity %q — tap the button, sign in, allow. The link is valid for 15 minutes.", profileName)
 		if err := bot.SendKeyboard(ctx, chatID, msg, kb); err != nil {
 			fmt.Fprintln(os.Stderr, "telegram: integration:", err)
 			return "couldn't send the connect link: " + err.Error(), true
 		}
 		return "", true
 	case "":
-		return "usage: /integration google", true
+		// Bare /integration: a tappable menu of what can be connected.
+		kb := [][]telegram.Button{{{Text: "🔗 Google — calendar + email", CallbackData: "ig:google"}}}
+		if err := bot.SendKeyboard(ctx, chatID, "What shall I connect?", kb); err != nil {
+			fmt.Fprintln(os.Stderr, "telegram: integration:", err)
+			return "couldn't show the integrations menu: " + err.Error(), true
+		}
+		return "", true
 	default:
 		return fmt.Sprintf("unknown integration %q (available: google)", arg), true
 	}
+}
+
+// googleConnectButton mints a consent link for the identity and returns the
+// message + a URL-button keyboard; a nil keyboard means msg is an error to
+// show instead.
+func googleConnectButton(google *auth.GoogleRemote, profileName string, chatID int64) (string, [][]telegram.Button) {
+	if google == nil {
+		return "Google connect isn't configured on this server — it needs GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (a Web OAuth client) and HARNESS_PUBLIC_URL.", nil
+	}
+	authStore := auth.NewStore(profile.AuthFile(profileName))
+	u, err := google.Start(authStore, "telegram:"+strconv.FormatInt(chatID, 10))
+	if err != nil {
+		return "couldn't start the Google connect: " + err.Error(), nil
+	}
+	msg := fmt.Sprintf("Connecting Google to identity %q — tap the button, sign in, allow. The link is valid for 15 minutes.", profileName)
+	return msg, [][]telegram.Button{{{Text: "🔗 Connect Google", URL: u}}}
 }
 
 // botCommandSuffix extracts the @botname suffix from a command token, so
