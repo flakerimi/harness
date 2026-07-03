@@ -92,8 +92,8 @@ func TestStatusAndToolsGate(t *testing.T) {
 	if !c.Status(context.Background()).Connected {
 		t.Error("should be connected after credentials saved")
 	}
-	if ts, _ := c.Tools(context.Background()); len(ts) != 6 {
-		t.Errorf("want 6 tools (calendar + gmail read/draft/send) after login, got %d", len(ts))
+	if ts, _ := c.Tools(context.Background()); len(ts) != 7 {
+		t.Errorf("want 7 tools (calendar + gmail read/draft/send/mark) after login, got %d", len(ts))
 	}
 }
 
