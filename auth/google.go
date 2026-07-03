@@ -29,6 +29,9 @@ var GoogleDefaultScopes = []string{
 	"https://www.googleapis.com/auth/calendar.events.readonly",
 	"https://www.googleapis.com/auth/gmail.readonly",
 	"https://www.googleapis.com/auth/gmail.compose",
+	// modify covers label changes (mark read, archive) — accounts connected
+	// before it was added must reconnect to grant it.
+	"https://www.googleapis.com/auth/gmail.modify",
 }
 
 // GoogleLogin runs the Google OAuth flow (loopback redirect, PKCE, offline +

@@ -47,7 +47,7 @@ func (c *Connector) Status(context.Context) connector.Status {
 	if _, err := c.store.Load("google"); err != nil {
 		return connector.Status{Connected: false, Detail: "not logged in — run: harness login -provider google"}
 	}
-	return connector.Status{Connected: true, Detail: "calendar + gmail (read + draft + send)"}
+	return connector.Status{Connected: true, Detail: "calendar + gmail (read + draft + send + mark)"}
 }
 
 func (c *Connector) Tools(context.Context) ([]tool.Tool, error) {
@@ -63,6 +63,7 @@ func (c *Connector) Tools(context.Context) ([]tool.Tool, error) {
 		&gmailGetTool{c: c},
 		&gmailDraftTool{c: c},
 		&gmailSendTool{c: c},
+		&gmailMarkTool{c: c},
 	}, nil
 }
 
@@ -624,6 +625,59 @@ func (t *gmailSendTool) Run(ctx context.Context, input json.RawMessage, _ *tool.
 	}
 	_ = json.Unmarshal(body, &sent)
 	return tool.Result{Content: fmt.Sprintf("sent email to %s (id %s)", args.To, orDefault(sent.ID, "?"))}, nil
+}
+
+type gmailMarkTool struct{ c *Connector }
+
+func (gmailMarkTool) Spec() tool.Spec {
+	return tool.Spec{
+		Name:        "gmail_mark_read",
+		Description: "Mark a Gmail message as read (and optionally archive it out of the inbox). Use after triaging: a message you've reported or handled shouldn't stay unread. Requires the gmail.modify scope — if this errors with insufficient permissions, the account needs reconnecting.",
+		Writes:      true,
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id": map[string]any{
+					"type":        "string",
+					"description": "The Gmail message id (from gmail_list_messages / gmail_get_message).",
+				},
+				"archive": map[string]any{
+					"type":        "boolean",
+					"description": "Also remove it from the inbox (archive). Default: just mark read.",
+				},
+			},
+			"required": []string{"id"},
+		},
+	}
+}
+
+func (t *gmailMarkTool) Run(ctx context.Context, input json.RawMessage, _ *tool.Env) (tool.Result, error) {
+	var args struct {
+		ID      string `json:"id"`
+		Archive bool   `json:"archive"`
+	}
+	if err := json.Unmarshal(input, &args); err != nil {
+		return tool.Result{Content: "invalid input: " + err.Error(), IsError: true}, nil
+	}
+	if args.ID == "" {
+		return tool.Result{Content: "id is required", IsError: true}, nil
+	}
+	remove := []string{"UNREAD"}
+	if args.Archive {
+		remove = append(remove, "INBOX")
+	}
+	payload, err := json.Marshal(map[string]any{"removeLabelIds": remove})
+	if err != nil {
+		return tool.Result{Content: err.Error(), IsError: true}, nil
+	}
+	if _, err := t.c.post(ctx, "/gmail/v1/users/me/messages/"+url.PathEscape(args.ID)+"/modify", payload); err != nil {
+		return tool.Result{Content: err.Error(), IsError: true}, nil
+	}
+	verb := "marked read"
+	if args.Archive {
+		verb = "marked read + archived"
+	}
+	return tool.Result{Content: fmt.Sprintf("%s: %s", verb, args.ID)}, nil
 }
 
 // buildRawMessage assembles an RFC 2822 message for the Gmail drafts API. The
