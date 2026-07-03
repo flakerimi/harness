@@ -42,6 +42,12 @@ type Task struct {
 	Finished time.Time `json:"finished,omitzero"`
 	Result   string    `json:"result,omitempty"`
 	Error    string    `json:"error,omitempty"`
+
+	// Retry state: transient failures (network, provider blips) re-queue the
+	// job instead of failing it — Attempts counts runs, NotBefore delays the
+	// next pickup so retries back off.
+	Attempts  int       `json:"attempts,omitempty"`
+	NotBefore time.Time `json:"not_before,omitzero"`
 }
 
 // Store persists tasks as one JSON file each under dir.
@@ -123,16 +129,18 @@ func (s *Store) List() ([]Task, error) {
 	return out, nil
 }
 
-// NextQueued claims the oldest queued task: it marks it Running and persists
-// before returning, so a single worker processes each job once. Returns nil
-// with no error when the queue is empty.
+// NextQueued claims the oldest runnable queued task: it marks it Running and
+// persists before returning, so a single worker processes each job once. Jobs
+// whose NotBefore is in the future (retry backoff) are skipped. Returns nil
+// with no error when nothing is runnable.
 func (s *Store) NextQueued() (*Task, error) {
 	all, err := s.List()
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now()
 	for i := range all {
-		if all[i].Status != Queued {
+		if all[i].Status != Queued || now.Before(all[i].NotBefore) {
 			continue
 		}
 		t := all[i]
@@ -144,6 +152,16 @@ func (s *Store) NextQueued() (*Task, error) {
 		return &t, nil
 	}
 	return nil, nil
+}
+
+// Requeue puts a transiently-failed job back in the queue with backoff, so a
+// network blip doesn't kill work the user is waiting on.
+func (s *Store) Requeue(t *Task, delay time.Duration) error {
+	t.Attempts++
+	t.Status = Queued
+	t.Started = time.Time{}
+	t.NotBefore = time.Now().Add(delay)
+	return s.Save(t)
 }
 
 // Complete finalizes a run: result text on success, the error on failure.

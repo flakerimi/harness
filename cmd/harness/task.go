@@ -118,7 +118,10 @@ func executeTask(ctx context.Context, store *task.Store, t *task.Task, defaultPr
 	if prov == "" {
 		prov = defaultProvider
 	}
-	fmt.Fprintf(os.Stderr, "task: running %s (profile %q): %s\n", t.ID, t.Profile, clip(t.Prompt, 80))
+	// Failover: retry attempts walk the fallback chain — a provider outage
+	// shouldn't kill the job when five other vendors' keys are configured.
+	prov = providerForAttempt(prov, t.Attempts)
+	fmt.Fprintf(os.Stderr, "task: running %s (profile %q, provider %s, attempt %d): %s\n", t.ID, t.Profile, prov, t.Attempts+1, clip(t.Prompt, 80))
 
 	var result string
 	ag, err := app.Build(ctx, app.Spec{
@@ -137,6 +140,19 @@ func executeTask(ctx context.Context, store *task.Store, t *task.Task, defaultPr
 		err = ag.Run(ctx, t.Prompt, c)
 		result = strings.TrimSpace(c.Text())
 	}
+
+	// Transient infrastructure failure (network blip, provider hiccup): the
+	// job goes back in the queue with backoff instead of dying — the user only
+	// hears about it if the last attempt fails too.
+	const maxAttempts = 3
+	if err != nil && ctx.Err() == nil && isTransientErr(err) && t.Attempts < maxAttempts-1 {
+		delay := time.Duration(2<<t.Attempts) * time.Minute // 2m, 4m
+		if rerr := store.Requeue(t, delay); rerr == nil {
+			fmt.Fprintf(os.Stderr, "task: %s transient failure (attempt %d/%d), retrying in %s: %v\n", t.ID, t.Attempts, maxAttempts, delay, err)
+			return
+		}
+	}
+
 	if serr := store.Complete(t, result, err); serr != nil {
 		fmt.Fprintln(os.Stderr, "task: save:", serr)
 	}
@@ -158,6 +174,24 @@ func executeTask(ctx context.Context, store *task.Store, t *task.Task, defaultPr
 	} else {
 		fmt.Fprintf(os.Stderr, "task: %s done\n", t.ID)
 	}
+}
+
+// isTransientErr classifies failures worth retrying: transport-level trouble
+// and provider overload, as opposed to auth/validation errors that will fail
+// identically forever.
+func isTransientErr(err error) bool {
+	msg := strings.ToLower(err.Error())
+	for _, sig := range []string{
+		"i/o timeout", "dial tcp", "connection refused", "connection reset",
+		"tls handshake", "no such host", "unexpected eof", "temporary failure",
+		"http 429", "http 500", "http 502", "http 503", "http 504",
+		"context deadline exceeded",
+	} {
+		if strings.Contains(msg, sig) {
+			return true
+		}
+	}
+	return false
 }
 
 // runTaskWorker is the daemon's queue drainer: recover interrupted jobs, then

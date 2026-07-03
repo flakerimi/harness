@@ -210,6 +210,25 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 		bh := &agent.Collector{}
 		history, rerr := ag.Continue(ctx, sess.History, text, bh)
 		stopTyping()
+
+		// Provider failover: a transport-level failure retries once on the
+		// first fallback provider (routing re-resolves its model) — the user
+		// gets an answer, not an apology for a vendor's hiccup.
+		if fb := fallbackProviders(); rerr != nil && isTransientErr(rerr) && len(fb) > 0 && fb[0] != provSlug {
+			fmt.Fprintf(os.Stderr, "telegram: %v — failing over to %s\n", rerr, fb[0])
+			if ag2, berr := app.Build(ctx, app.Spec{
+				Provider: fb[0], System: "You are a helpful assistant replying over Telegram. Keep replies concise and chat-friendly.",
+				MaxTokens: 8192, Root: "", Profile: curProfile, Tier: "reasoning",
+				Route: true, Escalate: true, Compact: o.Compact, MaxTurns: 40,
+				TaskDeliver: "telegram:" + strconv.FormatInt(chatID, 10),
+			}); berr == nil {
+				stopTyping = pulseTyping(ctx, bot, chatID)
+				bh = &agent.Collector{}
+				history, rerr = ag2.Continue(ctx, sess.History, text, bh)
+				stopTyping()
+			}
+		}
+
 		sess.History = history
 		if serr := store.Save(sess); serr != nil {
 			fmt.Fprintln(os.Stderr, "warning: save:", serr)

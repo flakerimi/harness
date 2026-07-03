@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEnqueueClaimComplete(t *testing.T) {
@@ -130,5 +131,23 @@ func TestStatusToolShowsOwnQueueOnly(t *testing.T) {
 	res, _ = NewStatusTool(s, "developer").Run(context.Background(), nil, nil)
 	if res.IsError || !strings.Contains(res.Content, "no background tasks") {
 		t.Errorf("empty queue = %+v", res)
+	}
+}
+
+func TestRequeueBacksOff(t *testing.T) {
+	s := NewStore(t.TempDir())
+	tk, _ := s.Enqueue(Task{Profile: "personal", Prompt: "flaky work"})
+	claimed, _ := s.NextQueued()
+
+	if err := s.Requeue(claimed, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	onDisk, _ := s.Get(tk.ID)
+	if onDisk.Status != Queued || onDisk.Attempts != 1 || onDisk.NotBefore.Before(time.Now().Add(50*time.Minute)) {
+		t.Errorf("requeued = %+v", onDisk)
+	}
+	// Backoff hides it from the worker until NotBefore passes.
+	if got, _ := s.NextQueued(); got != nil {
+		t.Errorf("backoff task must not be claimable, got %v", got)
 	}
 }

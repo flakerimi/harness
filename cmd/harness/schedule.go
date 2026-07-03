@@ -235,7 +235,22 @@ func runScheduledTask(ctx context.Context, t schedule.Task) {
 		return
 	}
 	h := &captureHandler{}
-	if err := ag.Run(ctx, t.Prompt, h); err != nil {
+	err = ag.Run(ctx, t.Prompt, h)
+	// Provider failover: a scheduled run (the morning brief, the inbox watch)
+	// shouldn't skip a beat because one vendor blinked — retry once on the
+	// first fallback, whose model routing re-resolves.
+	if fb := fallbackProviders(); err != nil && isTransientErr(err) && len(fb) > 0 && fb[0] != provSlug {
+		fmt.Fprintf(os.Stderr, "\nschedule: %v — failing over to %s\n", err, fb[0])
+		if ag2, berr := app.Build(ctx, app.Spec{
+			Provider: fb[0], System: "You are a helpful assistant.", MaxTokens: 8192,
+			Root: "", Profile: t.Profile, Tier: "reasoning", Route: true,
+			Classify: false, Escalate: true, MaxTurns: 40,
+		}); berr == nil {
+			h = &captureHandler{}
+			err = ag2.Run(ctx, t.Prompt, h)
+		}
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "\nerror:", err)
 	}
 	fmt.Println()
