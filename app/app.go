@@ -19,6 +19,7 @@ import (
 	"github.com/flakerimi/harness/connector/google"
 	"github.com/flakerimi/harness/connector/mcp"
 	"github.com/flakerimi/harness/connector/plugin"
+	"github.com/flakerimi/harness/doctor"
 	"github.com/flakerimi/harness/memory"
 	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/provider"
@@ -319,6 +320,10 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		for _, t := range schedule.NewTools(schedule.NewStore(profile.ScheduleDir()), spec.Profile, spec.Provider, spec.TaskDeliver) {
 			toolReg.Register(t)
 		}
+
+		// Self-diagnosis: when tools time out or a provider misbehaves, the
+		// identity can check its own wires instead of guessing.
+		toolReg.Register(doctor.NewTool(cfg.Search.SearxngURL, os.Getenv("HARNESS_PUBLIC_URL")))
 	}
 
 	return agent.New(prov, toolReg, opts), nil

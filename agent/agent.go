@@ -7,6 +7,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 
@@ -141,6 +142,13 @@ func (a *Agent) Continue(ctx context.Context, history []provider.Message, userIn
 		if a.routingOn() && a.opts.Escalate && tier != router.TierReasoning && fumbled(assistant) {
 			tier = router.Escalate(tier)
 			continue
+		}
+
+		// A turn with no content at all (a model emitting nothing, or only
+		// malformed blocks that accumulation dropped) is an error, not an
+		// answer — silence with no explanation is the one forbidden outcome.
+		if len(assistant.Content) == 0 {
+			return msgs, errors.New("provider returned an empty reply")
 		}
 
 		msgs = append(msgs, assistant)
@@ -374,6 +382,11 @@ func (a *Agent) stream(ctx context.Context, msgs []provider.Message, model strin
 	slices.Sort(order)
 	for _, idx := range order {
 		ta := tools[idx]
+		if ta.name == "" {
+			// A malformed call (no tool name) is unrunnable and unreplayable —
+			// drop it at the source rather than persisting poison.
+			continue
+		}
 		var input map[string]any
 		if s := strings.TrimSpace(ta.input.String()); s != "" {
 			_ = json.Unmarshal([]byte(s), &input)

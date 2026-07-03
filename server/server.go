@@ -58,12 +58,24 @@ type Server struct {
 	// that started it can confirm.
 	GoogleOAuth *auth.GoogleRemote
 	OnConnected func(meta string)
+
+	// Ready, when set, gates /healthz: a non-nil error turns it into a 503.
+	// The daemon wires its egress watchdog here, so a container whose outbound
+	// network has wedged (inbound keeps working — that's this exact failure
+	// mode) reports unhealthy and the supervisor's health check restarts it.
+	Ready func() error
 }
 
 // Handler returns the HTTP routes, with CORS applied and /v1 token-gated.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		if s.Ready != nil {
+			if err := s.Ready(); err != nil {
+				http.Error(w, "unhealthy: "+err.Error(), http.StatusServiceUnavailable)
+				return
+			}
+		}
 		fmt.Fprintln(w, "ok")
 	})
 	mux.HandleFunc("GET /", s.handleIndex)

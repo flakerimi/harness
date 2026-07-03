@@ -30,6 +30,8 @@ func runDaemon(args []string) {
 	noSchedule := fs.Bool("no-schedule", false, "don't run the scheduler")
 	taskInterval := fs.Duration("task-interval", 3*time.Second, "how often the worker checks the background-task queue")
 	noTasks := fs.Bool("no-tasks", false, "don't run the background-task worker")
+	watchTarget := fs.String("watchdog-target", "https://api.telegram.org", "outbound URL the egress watchdog probes")
+	noWatchdog := fs.Bool("no-watchdog", false, "don't run the egress watchdog (healthz stays a plain liveness check)")
 	telegramOn := fs.Bool("telegram", false, "also run the Telegram bot ($TELEGRAM_BOT_TOKEN)")
 	tgProfile := fs.String("telegram-profile", "", "default identity for the Telegram bot")
 	tgAllow := fs.String("allow", "", "Telegram allowlist (comma-separated chat ids)")
@@ -64,6 +66,14 @@ func runDaemon(args []string) {
 	})
 	srv.GoogleOAuth = google
 	srv.OnConnected = notifyConnected
+
+	// Egress watchdog: a wedged outbound network flips /healthz to 503, so a
+	// platform health check (e.g. `bp health enable`) restarts the container.
+	if !*noWatchdog {
+		watch := newEgressWatch(*watchTarget, 3)
+		srv.Ready = watch.Ready
+		run("watchdog", func() { watch.run(ctx, 90*time.Second) })
+	}
 	run("api", func() {
 		fmt.Fprintf(os.Stderr, "daemon: api on %s\n", *addr)
 		if err := serveHTTP(ctx, *addr, srv.Handler()); err != nil {
