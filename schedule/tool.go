@@ -33,7 +33,7 @@ type addTool struct{ scheduleTools }
 func (a addTool) Spec() tool.Spec {
 	return tool.Spec{
 		Name:        "schedule_add",
-		Description: "Schedule a recurring (or one-shot) run of yourself: a prompt executed on a clock, as this same identity. Specs: 'every 30m' | 'daily 07:00' | 'weekly fri 18:00' | 'once 09:00' | 'in 2h' (one-shots retire after firing). Output is delivered to the user; a run that outputs nothing sends nothing — stay silent when there's nothing worth saying.",
+		Description: "Schedule a recurring (or one-shot) run of yourself: a prompt executed on a clock, as this same identity. Specs: 'every 30m' | 'daily 07:00' | 'weekly fri 18:00' | 'once 09:00' | 'in 2h' (one-shots retire after firing). Output is delivered to the user. For watch-style schedules, instruct the run to reply with exactly the single word NOTHING when there's nothing worth saying — that is swallowed and no message is sent.",
 		Writes:      true,
 		InputSchema: map[string]any{
 			"type": "object",

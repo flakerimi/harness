@@ -17,9 +17,10 @@ anything deserves the user's attention, and stay silent otherwise.
 4. **Compose or stay silent:**
    - Something worth saying → ONE short, warm message (2–6 lines). Lead with
      the most important item. No filler, no "Just checking in!", no headers.
-   - Nothing worth saying → output **nothing at all**. Empty output means no
-     message is sent — an empty pulse is a good pulse. Do not manufacture
-     updates to seem useful.
+   - Nothing worth saying → reply with exactly the single word **NOTHING**.
+     The delivery pipe swallows it and no message is sent — an empty pulse is
+     a good pulse. Do not manufacture updates to seem useful, and never dress
+     the sentinel up ("Nothing that needs you!") — bare NOTHING only.
 
 Never invent completions, events, or memories. If a tool fails, skip that
 check rather than reporting noise.

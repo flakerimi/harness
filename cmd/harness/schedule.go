@@ -241,14 +241,32 @@ func runScheduledTask(ctx context.Context, t schedule.Task) {
 	fmt.Println()
 	if t.Deliver != "" {
 		text := strings.TrimSpace(h.text.String())
+		if isSilence(text) {
+			// The run decided nothing deserves the user. Models are bad at
+			// emitting literally nothing, so a sentinel ("NOTHING") counts as
+			// silence too — no delivery, no 10-minutely "all quiet" spam.
+			fmt.Fprintf(os.Stderr, "deliver: silent run (%s), nothing sent\n", t.ID)
+			return
+		}
 		if err := deliver(ctx, t.Deliver, text); err != nil {
 			fmt.Fprintln(os.Stderr, "warning: deliver:", err)
-		} else if text != "" {
+		} else {
 			// Proof of delivery in the log — a sent-but-vanished message
 			// should never be a mystery.
 			fmt.Fprintf(os.Stderr, "deliver: sent %d chars to %s\n", len(text), t.Deliver)
 		}
 	}
+}
+
+// isSilence reports whether a scheduled run's output means "say nothing":
+// empty, or a bare silence sentinel (optionally wrapped in markdown/punctuation).
+func isSilence(text string) bool {
+	norm := strings.ToLower(strings.Trim(strings.TrimSpace(text), "*_`.!()[]\" \n"))
+	switch norm {
+	case "", "nothing", "silence", "nothing to report", "nothing that needs you":
+		return true
+	}
+	return false
 }
 
 // captureHandler renders the run to the terminal like cliHandler but also

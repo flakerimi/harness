@@ -18,7 +18,8 @@ const pulsePrompt = "This is your scheduled pulse — a quiet check-in, not a co
 	"for finished or failed background work worth mentioning; if calendar tools are connected, look at " +
 	"the next few hours; call resurface once and mention the note only if it is genuinely timely. " +
 	"If something deserves the user's attention, reply with ONE short, warm message (2–6 lines). " +
-	"If nothing does, output nothing at all — an empty pulse is a good pulse. Never invent updates."
+	"If nothing does, reply with exactly the single word NOTHING — it is swallowed and no message is sent. " +
+	"An empty pulse is a good pulse. Never invent updates."
 
 // runPulse installs, shows, or removes an identity's scheduled check-in — the
 // heartbeat that makes the assistant present rather than merely available.

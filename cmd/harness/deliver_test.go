@@ -55,3 +55,16 @@ func TestDeliverRejectsBadTargets(t *testing.T) {
 		t.Errorf("empty text should be a no-op, got %v", err)
 	}
 }
+
+func TestIsSilenceSwallowsSentinels(t *testing.T) {
+	for _, s := range []string{"", "  ", "NOTHING", "nothing", "*Nothing*", "_NOTHING._", "`nothing`", "Nothing that needs you.", "*Nothing that needs you.*", "SILENCE"} {
+		if !isSilence(s) {
+			t.Errorf("%q should count as silence", s)
+		}
+	}
+	for _, s := range []string{"Nothing urgent, but your 3pm moved to 4", "2 new startups overnight", "NOTHING beats this: you got the grant!"} {
+		if isSilence(s) {
+			t.Errorf("%q is a real message, must not be swallowed", s)
+		}
+	}
+}
