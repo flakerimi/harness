@@ -15,6 +15,7 @@ import (
 
 	"github.com/flakerimi/harness/agent"
 	"github.com/flakerimi/harness/app"
+	"github.com/flakerimi/harness/auth"
 	"github.com/flakerimi/harness/channel/telegram"
 	"github.com/flakerimi/harness/config"
 	"github.com/flakerimi/harness/memory"
@@ -47,6 +48,7 @@ type telegramOptions struct {
 	Profile  string // default identity; empty falls back to config
 	Allow    string // comma-separated allowed chat ids; empty falls back to env
 	Compact  int
+	Google   *auth.GoogleRemote // remote Google connect (/integration google); nil = not configured
 }
 
 // runTelegram is the CLI entry: parse flags, then run the bot until interrupted.
@@ -118,6 +120,7 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 	if err := bot.SetCommands(ctx, []telegram.Command{
 		{Command: "profile", Description: "Switch identity: /profile <name> (e.g. business)"},
 		{Command: "profiles", Description: "List identities and show the current one"},
+		{Command: "integration", Description: "Connect a service: /integration google"},
 		{Command: "model", Description: "Switch model: /model <provider> [model]"},
 		{Command: "models", Description: "Pick a provider/model from a menu"},
 		{Command: "status", Description: "Show current identity, model, and length"},
@@ -153,6 +156,11 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 		// Identity switching (/profile, /profiles) — changes which identity (and
 		// thus account/memory/thread) this chat uses.
 		if reply, handled := identityCommand(identities, chatID, text, curProfile); handled {
+			return reply
+		}
+		// /integration google — remote OAuth: hand out a consent link bound to
+		// this chat; the daemon's public callback finishes the connect.
+		if reply, handled := integrationCommand(ctx, bot, o.Google, chatID, curProfile, text); handled {
 			return reply
 		}
 		// /model (no args) and /models open the interactive provider→model menu.
@@ -322,6 +330,7 @@ func telegramCommand(store *session.Store, sess *session.Session, text, defProvi
 	case "start", "help":
 		return "I'm your assistant. Just talk to me normally. Commands:\n" +
 			"/profile <name> — switch identity (e.g. business)\n" +
+			"/integration google — connect Google (calendar + email)\n" +
 			"/profiles — list identities\n" +
 			"/model <provider> [model] — switch model (e.g. /model kimi)\n" +
 			"/models — pick from a menu\n" +

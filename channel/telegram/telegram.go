@@ -80,11 +80,12 @@ func (c *CallbackQuery) sender() string {
 	return c.From.FirstName
 }
 
-// Button is one inline-keyboard button: a label and the opaque data sent back
-// when it's tapped (max 64 bytes).
+// Button is one inline-keyboard button: a label plus either the opaque data
+// sent back when it's tapped (max 64 bytes) or a URL the client opens.
 type Button struct {
 	Text         string `json:"text"`
-	CallbackData string `json:"callback_data"`
+	CallbackData string `json:"callback_data,omitempty"`
+	URL          string `json:"url,omitempty"`
 }
 
 func (m *Message) sender() string {

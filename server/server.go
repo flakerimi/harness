@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/flakerimi/harness/agent"
+	"github.com/flakerimi/harness/auth"
 	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/session"
 	"github.com/flakerimi/harness/task"
@@ -49,6 +50,14 @@ type Server struct {
 	// workspace's pub/ dir → the page is live at /<path>. Point it at a
 	// dedicated pub dir, never the whole workspace.
 	Public string
+
+	// GoogleOAuth, when set, enables the public /oauth/google/callback route —
+	// the landing spot for the remote connect flow (consent link handed out in
+	// chat, browser on the user's phone). OnConnected, if set, is told the
+	// meta of a finished connect (e.g. "telegram:<chatID>") so the surface
+	// that started it can confirm.
+	GoogleOAuth *auth.GoogleRemote
+	OnConnected func(meta string)
 }
 
 // Handler returns the HTTP routes, with CORS applied and /v1 token-gated.
@@ -68,8 +77,42 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("POST /v1/tasks", s.guard(s.handleTaskAdd))
 		mux.Handle("GET /v1/tasks/{id}", s.guard(s.handleTaskShow))
 	}
+	if s.GoogleOAuth != nil {
+		mux.HandleFunc("GET /oauth/google/callback", s.handleGoogleCallback)
+	}
 	return cors(mux)
 }
+
+// handleGoogleCallback is where Google's consent redirect lands (the user's
+// browser, so it must be open). The one-time state minted by Start is the
+// authorization; a bad or replayed state fails.
+func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
+	state, code := r.URL.Query().Get("state"), r.URL.Query().Get("code")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if errMsg := r.URL.Query().Get("error"); errMsg != "" {
+		fmt.Fprintf(w, oauthPage, "✗ Google connect failed", "Google said: "+errMsg)
+		return
+	}
+	if state == "" || code == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, oauthPage, "✗ Invalid callback", "Missing state or code — start the connect again.")
+		return
+	}
+	meta, err := s.GoogleOAuth.Finish(r.Context(), state, code)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, oauthPage, "✗ Google connect failed", err.Error())
+		return
+	}
+	fmt.Fprintf(w, oauthPage, "✓ Google connected", "You can close this tab and go back to the chat.")
+	if s.OnConnected != nil {
+		s.OnConnected(meta)
+	}
+}
+
+const oauthPage = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>harness</title><body style="font-family:system-ui;display:grid;place-items:center;min-height:80vh;text-align:center">
+<div><h1 style="font-size:1.6rem">%s</h1><p style="color:#555">%s</p></div>`
 
 // handleIndex answers "/" with the service card; any other unmatched GET is
 // tried against the Public dir (published pages), 404 otherwise. http.Dir

@@ -52,12 +52,18 @@ func runDaemon(args []string) {
 		})
 	}
 
+	// Remote Google connect: with a Web OAuth client + a public URL, chats can
+	// connect Google via /integration google (consent link → public callback).
+	google := googleBrokerFromEnv()
+
 	// HTTP API (always on).
 	tok := resolveAPIToken(*token, *open)
 	srv := buildAPIServer(apiOptions{
 		Provider: *providerSlug, Model: *model, MaxTokens: *maxTokens,
 		Root: *root, Bash: *bash, Compact: *compact, Token: tok,
 	})
+	srv.GoogleOAuth = google
+	srv.OnConnected = notifyConnected
 	run("api", func() {
 		fmt.Fprintf(os.Stderr, "daemon: api on %s\n", *addr)
 		if err := serveHTTP(ctx, *addr, srv.Handler()); err != nil {
@@ -81,6 +87,7 @@ func runDaemon(args []string) {
 		run("telegram", func() {
 			if err := runTelegramBot(ctx, telegramOptions{
 				Provider: *providerSlug, Profile: *tgProfile, Allow: *tgAllow, Compact: *compact,
+				Google: google,
 			}); err != nil && err != context.Canceled {
 				fmt.Fprintln(os.Stderr, "daemon: telegram:", err)
 			}

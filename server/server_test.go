@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/flakerimi/harness/agent"
+	"github.com/flakerimi/harness/auth"
 	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/session"
 	"github.com/flakerimi/harness/task"
@@ -287,5 +288,39 @@ func TestPublicServesPublishedPages(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if strings.Contains(rec.Body.String(), "private") {
 		t.Error("traversal must not escape the public dir")
+	}
+}
+
+func TestGoogleOAuthCallbackRoute(t *testing.T) {
+	srv := newTestServer(t)
+	// Without a broker, the route doesn't exist (falls through to 404).
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/oauth/google/callback?state=x&code=y", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("no broker = %d, want 404", rec.Code)
+	}
+
+	srv.GoogleOAuth = &auth.GoogleRemote{ClientID: "id", ClientSecret: "s", RedirectURL: "https://h/cb"}
+	h := srv.Handler()
+
+	// Google-reported error → friendly page, no exchange.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/oauth/google/callback?error=access_denied", nil))
+	if !strings.Contains(rec.Body.String(), "access_denied") {
+		t.Errorf("error page = %q", rec.Body.String())
+	}
+
+	// Unknown state → 400 with guidance; the connect can't be forged.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/oauth/google/callback?state=forged&code=x", nil))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "expired") {
+		t.Errorf("forged state = %d %q", rec.Code, rec.Body.String())
+	}
+
+	// Missing params → 400.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/oauth/google/callback", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("missing params = %d", rec.Code)
 	}
 }
