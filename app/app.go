@@ -23,6 +23,7 @@ import (
 	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/router"
+	"github.com/flakerimi/harness/schedule"
 	"github.com/flakerimi/harness/session"
 	"github.com/flakerimi/harness/skill"
 	"github.com/flakerimi/harness/subagent"
@@ -312,6 +313,12 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		taskStore := task.NewStore(profile.TasksDir())
 		toolReg.Register(task.NewEnqueueTool(taskStore, spec.Profile, spec.Provider, spec.TaskDeliver))
 		toolReg.Register(task.NewStatusTool(taskStore, spec.Profile))
+
+		// Recurring duties: the identity manages its own schedule — add, see,
+		// and remove the clock-driven runs of itself ("brief me at 7").
+		for _, t := range schedule.NewTools(schedule.NewStore(profile.ScheduleDir()), spec.Profile, spec.Provider, spec.TaskDeliver) {
+			toolReg.Register(t)
+		}
 	}
 
 	return agent.New(prov, toolReg, opts), nil
