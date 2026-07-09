@@ -22,6 +22,16 @@ type Check struct {
 	Millis int64
 }
 
+// probeTimeout bounds every probe. httpClient and telegramAPI are vars rather
+// than constants so tests can retarget them at a local server: this package
+// must never reach the real network under `go test`.
+const probeTimeout = 12 * time.Second
+
+var (
+	httpClient  = &http.Client{Timeout: probeTimeout}
+	telegramAPI = "https://api.telegram.org"
+)
+
 // providerBases maps provider slugs to a reachable endpoint; only providers
 // with a configured key are probed. Any HTTP response (even 401) proves the
 // wire — status codes are irrelevant here.
@@ -47,11 +57,11 @@ func Run(ctx context.Context, searxngURL, publicURL string) []Check {
 	var checks []Check
 
 	// Egress + chat channel in one: Telegram's API answers even without auth.
-	checks = append(checks, probe(ctx, "internet/telegram api", "https://api.telegram.org"))
+	checks = append(checks, probe(ctx, "internet/telegram api", telegramAPI))
 
 	// The bot token itself, when present.
 	if tok := os.Getenv("TELEGRAM_BOT_TOKEN"); tok != "" {
-		c := probeExpect(ctx, "telegram bot token", "https://api.telegram.org/bot"+tok+"/getMe", http.StatusOK)
+		c := probeExpect(ctx, "telegram bot token", telegramAPI+"/bot"+tok+"/getMe", http.StatusOK)
 		checks = append(checks, c)
 	}
 
@@ -83,14 +93,14 @@ func probeExpect(ctx context.Context, name, url string, want int) Check {
 }
 
 func doProbe(ctx context.Context, name, url string, want int) Check {
-	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	start := time.Now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return Check{Name: name, OK: false, Detail: err.Error()}
 	}
-	resp, err := (&http.Client{Timeout: 12 * time.Second}).Do(req)
+	resp, err := httpClient.Do(req)
 	ms := time.Since(start).Milliseconds()
 	if err != nil {
 		return Check{Name: name, OK: false, Detail: trimErr(err), Millis: ms}
