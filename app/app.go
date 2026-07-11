@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/flakerimi/harness/agent"
 	"github.com/flakerimi/harness/auth"
@@ -208,6 +209,15 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		}
 		fmt.Fprintf(os.Stderr, "› provider=%s model=%s\n", prov.Name(), shown)
 	}
+
+	// The model has no clock: stamp the prompt with today's date (server-local)
+	// so "today" in ledger entries, schedules, and deadlines resolves to a real
+	// date instead of a guess. Day granularity keeps prompt-cache invalidation
+	// to once per day.
+	if opts.System != "" {
+		opts.System += "\n\n"
+	}
+	opts.System += "Today is " + time.Now().Format("Monday, 2 January 2006") + "."
 
 	// Append skill discovery to the orchestrator's system prompt (after a
 	// profile may have set it). The load_skill tool is already in toolReg.
