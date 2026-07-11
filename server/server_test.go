@@ -196,6 +196,37 @@ func TestPushRegister(t *testing.T) {
 	}
 }
 
+func TestConnectorsEndpoints(t *testing.T) {
+	srv := newTestServer(t)
+	srv.Connectors = func(_ context.Context, profile string) []ConnectorInfo {
+		return []ConnectorInfo{{Name: "google", Connected: false, Detail: "not logged in"}}
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/connectors", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"google"`) {
+		t.Errorf("connectors = %d %q", rec.Code, rec.Body.String())
+	}
+
+	// Google connect start: not configured → 501; configured → a consent URL
+	// bound to the profile's store.
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/connectors/google/connect", strings.NewReader(`{}`)))
+	if rec.Code != http.StatusNotImplemented {
+		t.Errorf("unconfigured connect = %d", rec.Code)
+	}
+	srv.GoogleOAuth = &auth.GoogleRemote{ClientID: "cid", ClientSecret: "sec", RedirectURL: "https://x/cb"}
+	srv.AuthStore = func(profile string) *auth.Store {
+		return auth.NewStore(filepath.Join(t.TempDir(), profile+".json"))
+	}
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/connectors/google/connect", strings.NewReader(`{"profile":"personal"}`)))
+	var out map[string]string
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if rec.Code != http.StatusOK || !strings.Contains(out["url"], "accounts.google.com") || !strings.Contains(out["url"], "state=") {
+		t.Errorf("connect start = %d %q", rec.Code, rec.Body.String())
+	}
+}
+
 func TestChatWithImagesReachesTheModel(t *testing.T) {
 	srv := newTestServer(t)
 	// The echoing mock reports how many image blocks arrived, so receipt is

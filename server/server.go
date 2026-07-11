@@ -71,6 +71,48 @@ type Server struct {
 	// deliveries reach it. Nil returns 501, so the endpoint honestly reports
 	// that push isn't wired rather than silently swallowing tokens.
 	PushRegister func(profile, token, platform string) error
+
+	// Connectors, when set, enables GET /v1/connectors — integration status for
+	// a client app's settings page. AuthStore names the profile's credential
+	// store so POST /v1/connectors/google/connect can mint a consent link bound
+	// to it (the same GoogleOAuth flow the chat surfaces use).
+	Connectors func(ctx context.Context, profile string) []ConnectorInfo
+	AuthStore  func(profile string) *auth.Store
+}
+
+// ConnectorInfo is one integration's live status, as shown to clients.
+type ConnectorInfo struct {
+	Name      string `json:"name"`
+	Connected bool   `json:"connected"`
+	Detail    string `json:"detail"`
+}
+
+func (s *Server) handleConnectors(w http.ResponseWriter, r *http.Request) {
+	if s.Connectors == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "connector listing not configured"})
+		return
+	}
+	prof := orDefault(r.URL.Query().Get("profile"), s.DefaultProfile)
+	writeJSON(w, http.StatusOK, map[string]any{"profile": prof, "connectors": s.Connectors(r.Context(), prof)})
+}
+
+func (s *Server) handleGoogleConnectStart(w http.ResponseWriter, r *http.Request) {
+	if s.GoogleOAuth == nil || s.AuthStore == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "remote google connect not configured (needs GOOGLE_CLIENT_ID/SECRET and a public URL)"})
+		return
+	}
+	var req struct {
+		Profile string `json:"profile"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req) // empty body = default profile
+	prof := orDefault(req.Profile, s.DefaultProfile)
+	u, err := s.GoogleOAuth.Start(s.AuthStore(prof), "api:"+prof)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"profile": prof, "url": u})
 }
 
 func (s *Server) handlePushRegister(w http.ResponseWriter, r *http.Request) {
@@ -114,6 +156,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/sessions", s.guard(s.handleSessions))
 	mux.Handle("GET /v1/sessions/{id}", s.guard(s.handleSessionHistory))
 	mux.Handle("POST /v1/push/register", s.guard(s.handlePushRegister))
+	mux.Handle("GET /v1/connectors", s.guard(s.handleConnectors))
+	mux.Handle("POST /v1/connectors/google/connect", s.guard(s.handleGoogleConnectStart))
 	if s.Tasks != nil {
 		mux.Handle("GET /v1/tasks", s.guard(s.handleTasks))
 		mux.Handle("POST /v1/tasks", s.guard(s.handleTaskAdd))

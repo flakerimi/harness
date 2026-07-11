@@ -14,6 +14,7 @@ import (
 
 	"github.com/flakerimi/harness/agent"
 	"github.com/flakerimi/harness/app"
+	"github.com/flakerimi/harness/auth"
 	"github.com/flakerimi/harness/channel/apns"
 	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/server"
@@ -107,6 +108,23 @@ func buildAPIServer(o apiOptions) *server.Server {
 		// tokens live in the identity's data dir like everything else it owns.
 		PushRegister: func(profileName, token, platform string) error {
 			return apns.NewTokenStore(profile.DataDir(profileName)).Add(token, platform)
+		},
+		// Integration status + the credential store the Google connect-start
+		// endpoint binds consent links to — the app's Settings page drives the
+		// same remote OAuth flow the chat surfaces use.
+		Connectors: func(ctx context.Context, profileName string) []server.ConnectorInfo {
+			var out []server.ConnectorInfo
+			for _, c := range app.Connectors(false, profileName).Connectors() {
+				st := c.Status(ctx)
+				out = append(out, server.ConnectorInfo{Name: c.Name(), Connected: st.Connected, Detail: st.Detail})
+				if cl, ok := c.(interface{ Close() error }); ok {
+					_ = cl.Close()
+				}
+			}
+			return out
+		},
+		AuthStore: func(profileName string) *auth.Store {
+			return auth.NewStore(profile.AuthFile(profileName))
 		},
 	}
 	// Published pages: the default identity's workspace pub/ dir is served at
