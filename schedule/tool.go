@@ -50,6 +50,10 @@ func (a addTool) Spec() tool.Spec {
 					"type":        "string",
 					"description": "The self-contained instruction the scheduled run executes (it has no other context from this conversation).",
 				},
+				"deliver": map[string]any{
+					"type":        "string",
+					"description": "Optional: where output goes, overriding the default reply target. Forms: 'telegram:<chatID>', 'push:<profile>', 'webhook:<url>'; combine with | to reach several ('telegram:123|push:personal').",
+				},
 			},
 			"required": []string{"id", "spec", "prompt"},
 		},
@@ -58,9 +62,10 @@ func (a addTool) Spec() tool.Spec {
 
 func (a addTool) Run(ctx context.Context, input json.RawMessage, env *tool.Env) (tool.Result, error) {
 	var args struct {
-		ID     string `json:"id"`
-		Spec   string `json:"spec"`
-		Prompt string `json:"prompt"`
+		ID      string `json:"id"`
+		Spec    string `json:"spec"`
+		Prompt  string `json:"prompt"`
+		Deliver string `json:"deliver"`
 	}
 	if err := json.Unmarshal(input, &args); err != nil {
 		return tool.Result{Content: "invalid input: " + err.Error(), IsError: true}, nil
@@ -68,13 +73,17 @@ func (a addTool) Run(ctx context.Context, input json.RawMessage, env *tool.Env) 
 	if args.ID == "" || args.Spec == "" || strings.TrimSpace(args.Prompt) == "" {
 		return tool.Result{Content: "id, spec, and prompt are required", IsError: true}, nil
 	}
+	deliver := a.deliver
+	if strings.TrimSpace(args.Deliver) != "" {
+		deliver = strings.TrimSpace(args.Deliver)
+	}
 	t, err := a.store.Add(Task{
 		ID:       args.ID,
 		Profile:  a.profile,
 		Provider: a.provider,
 		Prompt:   args.Prompt,
 		Spec:     args.Spec,
-		Deliver:  a.deliver,
+		Deliver:  deliver,
 	}, time.Now())
 	if err != nil {
 		return tool.Result{Content: err.Error(), IsError: true}, nil

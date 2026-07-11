@@ -298,12 +298,26 @@ func (h *captureHandler) OnText(delta string) {
 	h.text.WriteString(delta)
 }
 
-// deliver sends a scheduled/background task's output to a channel target of
-// the form "kind:dest" — "telegram:<chatID>", "webhook:<url>", or any kind a
-// plugin advertises. Empty text is a no-op.
+// deliver sends a scheduled/background task's output to one or more channel
+// targets — "kind:dest" forms like "telegram:<chatID>", "push:<profile>",
+// "webhook:<url>", or any kind a plugin advertises — separated by "|"
+// ("telegram:123|push:personal" reaches both). Empty text is a no-op; with
+// multiple targets each is attempted and the first error is reported.
 func deliver(ctx context.Context, target, text string) error {
 	if strings.TrimSpace(text) == "" {
 		return nil
+	}
+	if targets := strings.Split(target, "|"); len(targets) > 1 {
+		var firstErr error
+		for _, t := range targets {
+			if t = strings.TrimSpace(t); t == "" {
+				continue
+			}
+			if err := deliver(ctx, t, text); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		return firstErr
 	}
 	kind, dest, ok := strings.Cut(target, ":")
 	if !ok || dest == "" {
