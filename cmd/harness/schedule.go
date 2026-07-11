@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/flakerimi/harness/app"
+	"github.com/flakerimi/harness/channel/apns"
 	"github.com/flakerimi/harness/channel/telegram"
 	"github.com/flakerimi/harness/connector/plugin"
 	"github.com/flakerimi/harness/profile"
@@ -321,6 +322,9 @@ func deliver(ctx context.Context, target, text string) error {
 		return telegram.New(tok).Send(ctx, chatID, text)
 	case "webhook":
 		return deliverWebhook(ctx, dest, text)
+	case "push", "apns":
+		// dest is the identity whose registered devices get the alert.
+		return deliverPush(ctx, dest, text)
 	default:
 		// A plugin can extend deliver kinds: any discovered executable whose
 		// manifest advertises this kind handles the target.
@@ -328,8 +332,41 @@ func deliver(ctx context.Context, target, text string) error {
 		if p, ok := plugin.FindDeliverer(plugs, kind); ok {
 			return p.Deliver(ctx, kind, dest, text)
 		}
-		return fmt.Errorf("unknown deliver kind %q (built-in: telegram, webhook; no plugin advertises it)", kind)
+		return fmt.Errorf("unknown deliver kind %q (built-in: telegram, webhook, push; no plugin advertises it)", kind)
 	}
+}
+
+// deliverPush alerts every device registered for an identity. Dead tokens
+// (wiped phone, reinstalled app) are pruned rather than failing the delivery;
+// the remaining devices still get the alert.
+func deliverPush(ctx context.Context, profileName, text string) error {
+	client, err := apns.FromEnv()
+	if err != nil {
+		return err
+	}
+	if client == nil {
+		return fmt.Errorf("push delivery needs APNS_KEY_B64/APNS_KEY_FILE + APNS_KEY_ID + APNS_TEAM_ID + APNS_TOPIC")
+	}
+	store := apns.NewTokenStore(profile.DataDir(profileName))
+	tokens := store.List()
+	if len(tokens) == 0 {
+		return fmt.Errorf("push: no devices registered for %q", profileName)
+	}
+	var firstErr error
+	for _, t := range tokens {
+		err := client.Push(ctx, t.Token, "", text)
+		if err == nil {
+			continue
+		}
+		if strings.Contains(err.Error(), "Unregistered") || strings.Contains(err.Error(), "BadDeviceToken") {
+			_ = store.Remove(t.Token)
+			continue
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // deliverWebhook POSTs the text to an incoming-webhook URL as JSON. The payload

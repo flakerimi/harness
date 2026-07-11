@@ -14,6 +14,7 @@ import (
 
 	"github.com/flakerimi/harness/agent"
 	"github.com/flakerimi/harness/app"
+	"github.com/flakerimi/harness/channel/apns"
 	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/server"
 	"github.com/flakerimi/harness/session"
@@ -102,6 +103,11 @@ func buildAPIServer(o apiOptions) *server.Server {
 			return session.NewStore(profile.SessionsDir(profileName))
 		},
 		Profiles: profileInfos,
+		// Device-token registration for push delivery (`push:<profile>`); the
+		// tokens live in the identity's data dir like everything else it owns.
+		PushRegister: func(profileName, token, platform string) error {
+			return apns.NewTokenStore(profile.DataDir(profileName)).Add(token, platform)
+		},
 	}
 	// Published pages: the default identity's workspace pub/ dir is served at
 	// the root — how the assistant shares a long report as a link instead of a

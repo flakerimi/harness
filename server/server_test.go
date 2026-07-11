@@ -166,6 +166,36 @@ func TestChatStreamsAndPersists(t *testing.T) {
 	}
 }
 
+func TestPushRegister(t *testing.T) {
+	srv := newTestServer(t)
+	var gotProfile, gotToken string
+	srv.PushRegister = func(profile, token, platform string) error {
+		gotProfile, gotToken = profile, token
+		return nil
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/push/register",
+		strings.NewReader(`{"token":"dev123","platform":"ios"}`)))
+	if rec.Code != http.StatusOK || gotProfile != "personal" || gotToken != "dev123" {
+		t.Errorf("register = %d profile=%q token=%q", rec.Code, gotProfile, gotToken)
+	}
+
+	// Missing token → 400; unconfigured server → 501.
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/push/register",
+		strings.NewReader(`{}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("missing token = %d", rec.Code)
+	}
+	srv.PushRegister = nil
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/push/register",
+		strings.NewReader(`{"token":"x"}`)))
+	if rec.Code != http.StatusNotImplemented {
+		t.Errorf("unconfigured = %d", rec.Code)
+	}
+}
+
 func TestChatWithImagesReachesTheModel(t *testing.T) {
 	srv := newTestServer(t)
 	// The echoing mock reports how many image blocks arrived, so receipt is

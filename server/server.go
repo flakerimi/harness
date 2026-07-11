@@ -65,6 +65,34 @@ type Server struct {
 	// network has wedged (inbound keeps working — that's this exact failure
 	// mode) reports unhealthy and the supervisor's health check restarts it.
 	Ready func() error
+
+	// PushRegister, when set, enables POST /v1/push/register — a client app
+	// stores its APNs device token against an identity so `push:<profile>`
+	// deliveries reach it. Nil returns 501, so the endpoint honestly reports
+	// that push isn't wired rather than silently swallowing tokens.
+	PushRegister func(profile, token, platform string) error
+}
+
+func (s *Server) handlePushRegister(w http.ResponseWriter, r *http.Request) {
+	if s.PushRegister == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "push registration not configured"})
+		return
+	}
+	var req struct {
+		Profile  string `json:"profile"`
+		Token    string `json:"token"`
+		Platform string `json:"platform"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Token) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "token is required"})
+		return
+	}
+	prof := orDefault(req.Profile, s.DefaultProfile)
+	if err := s.PushRegister(prof, strings.TrimSpace(req.Token), req.Platform); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"profile": prof, "status": "registered"})
 }
 
 // Handler returns the HTTP routes, with CORS applied and /v1 token-gated.
@@ -85,6 +113,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/models", s.guard(s.handleModels))
 	mux.Handle("GET /v1/sessions", s.guard(s.handleSessions))
 	mux.Handle("GET /v1/sessions/{id}", s.guard(s.handleSessionHistory))
+	mux.Handle("POST /v1/push/register", s.guard(s.handlePushRegister))
 	if s.Tasks != nil {
 		mux.Handle("GET /v1/tasks", s.guard(s.handleTasks))
 		mux.Handle("POST /v1/tasks", s.guard(s.handleTaskAdd))
