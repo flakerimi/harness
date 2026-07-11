@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -162,6 +163,46 @@ func TestChatStreamsAndPersists(t *testing.T) {
 	}
 	if len(metas) != 1 || metas[0].ID != "s1" || metas[0].Turns != 1 {
 		t.Errorf("session not persisted as expected: %+v", metas)
+	}
+}
+
+func TestChatWithImagesReachesTheModel(t *testing.T) {
+	srv := newTestServer(t)
+	// The echoing mock reports how many image blocks arrived, so receipt is
+	// observable through the SSE stream.
+	srv.Factory = func(_ context.Context, _, _, _ string) (*agent.Agent, error) {
+		return agent.New(provider.NewMock(), tool.NewRegistry(), agent.Options{}), nil
+	}
+	img := base64.StdEncoding.EncodeToString([]byte("JPEGBYTES"))
+	body := `{"session":"img1","message":"what is this","images":[{"media_type":"image/jpeg","data":"` + img + `"}]}`
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/chat", strings.NewReader(body)))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "image(s)") {
+		t.Errorf("image chat = %d %q", rec.Code, rec.Body.String())
+	}
+
+	// Image-only (no caption) is a valid turn.
+	rec = httptest.NewRecorder()
+	body = `{"session":"img2","images":[{"media_type":"image/png","data":"` + img + `"}]}`
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/chat", strings.NewReader(body)))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "image(s)") {
+		t.Errorf("image-only chat = %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestChatImageValidation(t *testing.T) {
+	srv := newTestServer(t)
+	cases := []struct{ name, body, wantErr string }{
+		{"bad base64", `{"message":"x","images":[{"media_type":"image/jpeg","data":"!!!"}]}`, "invalid base64"},
+		{"missing media type", `{"message":"x","images":[{"data":"aGk="}]}`, "media_type is required"},
+		{"empty turn", `{"session":"s"}`, "message or images required"},
+	}
+	for _, c := range cases {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/chat", strings.NewReader(c.body)))
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), c.wantErr) {
+			t.Errorf("%s = %d %q, want 400 containing %q", c.name, rec.Code, rec.Body.String(), c.wantErr)
+		}
 	}
 }
 

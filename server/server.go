@@ -14,6 +14,7 @@ package server
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -191,11 +192,49 @@ func (s *Server) handleTaskShow(w http.ResponseWriter, r *http.Request) {
 }
 
 type chatRequest struct {
-	Profile  string `json:"profile"`
-	Session  string `json:"session"`
-	Message  string `json:"message"`
-	Provider string `json:"provider"` // optional: switch this session's model provider
-	Model    string `json:"model"`    // optional: pin this session's model
+	Profile  string      `json:"profile"`
+	Session  string      `json:"session"`
+	Message  string      `json:"message"`
+	Provider string      `json:"provider"` // optional: switch this session's model provider
+	Model    string      `json:"model"`    // optional: pin this session's model
+	Images   []chatImage `json:"images"`   // optional: photos for vision-capable models
+}
+
+// chatImage is one inbound image on a chat turn, base64-encoded so it rides
+// plain JSON. Blind models degrade it to a placeholder at the provider seam.
+type chatImage struct {
+	MediaType string `json:"media_type"` // e.g. "image/jpeg", "image/png"
+	Data      string `json:"data"`       // base64 (std encoding) image bytes
+}
+
+// maxChatImageBytes caps a decoded image. 5 MB is the tightest per-image limit
+// among vision providers — same cap the Telegram surface applies.
+const maxChatImageBytes = 5 << 20
+
+// content decodes the request into user-turn blocks: images first, then the
+// text. An error names the offending image so the client can fix it.
+func (c chatRequest) content() ([]provider.Block, error) {
+	blocks := make([]provider.Block, 0, len(c.Images)+1)
+	for i, im := range c.Images {
+		raw, err := base64.StdEncoding.DecodeString(im.Data)
+		if err != nil {
+			return nil, fmt.Errorf("images[%d]: invalid base64", i)
+		}
+		if len(raw) > maxChatImageBytes {
+			return nil, fmt.Errorf("images[%d]: %d bytes exceeds the %d MB limit", i, len(raw), maxChatImageBytes>>20)
+		}
+		if im.MediaType == "" {
+			return nil, fmt.Errorf("images[%d]: media_type is required", i)
+		}
+		blocks = append(blocks, provider.Block{
+			Type:  provider.BlockImage,
+			Image: &provider.ImageBlock{MediaType: im.MediaType, Data: raw},
+		})
+	}
+	if strings.TrimSpace(c.Message) != "" {
+		blocks = append(blocks, provider.Block{Type: provider.BlockText, Text: c.Message})
+	}
+	return blocks, nil
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
@@ -204,8 +243,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 		return
 	}
-	if req.Message == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "message is required"})
+	if req.Message == "" && len(req.Images) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "message or images required"})
+		return
+	}
+	content, err := req.content()
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	prof := orDefault(req.Profile, s.DefaultProfile)
@@ -245,7 +289,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	h := &sseHandler{w: w, flusher: flusher}
 	h.send("ready", map[string]string{"profile": prof, "session": sess.ID, "provider": sess.Provider, "model": sess.Model})
 
-	history, runErr := ag.Continue(r.Context(), sess.History, req.Message, h)
+	history, runErr := ag.ContinueWith(r.Context(), sess.History, content, h)
 	sess.History = history
 	if serr := store.Save(sess); serr != nil {
 		h.send("error", map[string]string{"error": "save: " + serr.Error()})
