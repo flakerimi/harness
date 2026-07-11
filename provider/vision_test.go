@@ -31,6 +31,9 @@ func TestVisionCapableKnownPairs(t *testing.T) {
 		{"ollama", "llava:13b"},
 		{"moonshot", "moonshot-v1-8k-vision-preview"},
 		{"kimi", "kimi-latest"},
+		{"kimi", "kimi-k2.6"},
+		{"moonshot", "kimi-k2.5"},
+		{"fireworks", "accounts/fireworks/models/kimi-k2p6"},
 		{"mistral", "pixtral-large-latest"},
 		{"openrouter", "anthropic/claude-sonnet-4.5"},
 		{"openrouter", "google/gemini-2.5-flash"},
@@ -45,6 +48,7 @@ func TestVisionCapableKnownPairs(t *testing.T) {
 		{"openai", "gpt-3.5-turbo"},
 		{"ollama", "llama3.1"},
 		{"moonshot", "moonshot-v1-8k"},
+		{"fireworks", "accounts/fireworks/models/kimi-k2p5"}, // 500s on image input there
 		{"mistral", "mistral-large-latest"},
 		{"openrouter", "deepseek/deepseek-chat"},
 	}
