@@ -317,7 +317,7 @@ type calendarCreateTool struct{ c *Connector }
 
 func (calendarCreateTool) Spec() tool.Spec {
 	return tool.Spec{
-		Name: "calendar_create_event",
+		Name:        "calendar_create_event",
 		Description: "Create a Google Calendar event. start/end take RFC3339 with a UTC offset for timed events (e.g. 2026-07-13T14:00:00+02:00) or YYYY-MM-DD for all-day. Requires the calendar.events scope — an insufficient-permission error means the account was connected before write existed and must reconnect (harness connect google / the /integration google flow).",
 		Writes:      true,
 		InputSchema: map[string]any{
