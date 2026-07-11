@@ -11,6 +11,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"slices"
 )
 
@@ -44,6 +45,7 @@ const (
 	CapCaching    = "caching"    // provider may set prompt-cache breakpoints
 	CapTools      = "tools"      // provider may advertise tools to the model
 	CapStructured = "structured" // provider may enforce structured output
+	CapVision     = "vision"     // model accepts image blocks (see BlockImage)
 )
 
 // HasCap reports whether the caller-resolved capabilities include flag.
@@ -60,6 +62,7 @@ type Message struct {
 // Block kinds.
 const (
 	BlockText       = "text"
+	BlockImage      = "image"
 	BlockToolUse    = "tool_use"
 	BlockToolResult = "tool_result"
 )
@@ -69,8 +72,31 @@ const (
 type Block struct {
 	Type       string
 	Text       string
+	Image      *ImageBlock
 	ToolUse    *ToolUseBlock
 	ToolResult *ToolResultBlock
+}
+
+// ImageBlock is image bytes supplied by the user. Data is raw, not base64:
+// each adapter encodes it the way its vendor expects, so the neutral type
+// stays free of wire formats. A provider that lacks CapVision must degrade the
+// block via ImagePlaceholder rather than fail the request — sending an image to
+// a text-only model is an API error, and silently dropping it would leave the
+// model answering about something it was never shown.
+type ImageBlock struct {
+	MediaType string // e.g. "image/jpeg", "image/png", "image/gif", "image/webp"
+	Data      []byte
+}
+
+// ImagePlaceholder is the text a blind model sees in place of an image. It says
+// what was withheld and why, so the model can tell the user it cannot look
+// instead of hallucinating a description.
+func ImagePlaceholder(img *ImageBlock) string {
+	if img == nil {
+		return "[image omitted]"
+	}
+	return fmt.Sprintf("[image omitted: %s, %d bytes — this model has no vision capability]",
+		img.MediaType, len(img.Data))
 }
 
 // ToolUseBlock is the model asking to call a tool.

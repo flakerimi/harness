@@ -3,6 +3,7 @@ package provider
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -101,7 +102,7 @@ func (o *OpenAI) buildBody(req Request) map[string]any {
 	body := map[string]any{
 		"model":          req.Model,
 		"stream":         true,
-		"messages":       convertOpenAIMessages(req.System, req.Messages),
+		"messages":       convertOpenAIMessages(req.System, req.Messages, req.HasCap(CapVision)),
 		"stream_options": map[string]any{"include_usage": true},
 	}
 	if req.MaxTokens > 0 {
@@ -130,8 +131,9 @@ func (o *OpenAI) buildBody(req Request) map[string]any {
 
 // convertOpenAIMessages translates neutral messages into OpenAI's flat message
 // list: assistant tool calls go under tool_calls; each tool result becomes its
-// own message with role "tool".
-func convertOpenAIMessages(system string, msgs []Message) []map[string]any {
+// own message with role "tool". vision reports whether the target model can see
+// images; when false, image blocks degrade to a text placeholder.
+func convertOpenAIMessages(system string, msgs []Message, vision bool) []map[string]any {
 	out := make([]map[string]any, 0, len(msgs)+1)
 	if system != "" {
 		out = append(out, map[string]any{"role": "system", "content": system})
@@ -139,7 +141,7 @@ func convertOpenAIMessages(system string, msgs []Message) []map[string]any {
 	for _, m := range msgs {
 		switch m.Role {
 		case "user":
-			out = append(out, map[string]any{"role": "user", "content": joinText(m.Content)})
+			out = append(out, map[string]any{"role": "user", "content": openAIUserContent(m.Content, vision)})
 		case "assistant":
 			msg := map[string]any{"role": "assistant"}
 			if text := joinText(m.Content); text != "" {
@@ -176,6 +178,51 @@ func convertOpenAIMessages(system string, msgs []Message) []map[string]any {
 		}
 	}
 	return out
+}
+
+// openAIUserContent returns a plain string for text-only messages and only
+// switches to the content-parts array when a visible image is present. The
+// distinction matters: several OpenAI-compatible vendors (deepseek, ollama,
+// lmstudio) reject the array form, so text conversations must keep the shape
+// they have always sent.
+func openAIUserContent(blocks []Block, vision bool) any {
+	var texts []string
+	var parts []map[string]any
+	images := 0
+	for _, b := range blocks {
+		switch b.Type {
+		case BlockText:
+			if b.Text == "" {
+				continue
+			}
+			texts = append(texts, b.Text)
+			parts = append(parts, map[string]any{"type": "text", "text": b.Text})
+		case BlockImage:
+			if b.Image == nil {
+				continue
+			}
+			if !vision {
+				ph := ImagePlaceholder(b.Image)
+				texts = append(texts, ph)
+				parts = append(parts, map[string]any{"type": "text", "text": ph})
+				continue
+			}
+			images++
+			parts = append(parts, map[string]any{
+				"type":      "image_url",
+				"image_url": map[string]any{"url": dataURL(b.Image)},
+			})
+		}
+	}
+	if images == 0 {
+		return strings.Join(texts, "\n")
+	}
+	return parts
+}
+
+// dataURL renders image bytes as the inline data: URL OpenAI expects.
+func dataURL(img *ImageBlock) string {
+	return "data:" + img.MediaType + ";base64," + base64.StdEncoding.EncodeToString(img.Data)
 }
 
 func joinText(blocks []Block) string {

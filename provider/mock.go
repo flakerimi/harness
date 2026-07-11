@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"strings"
 )
 
@@ -43,8 +44,12 @@ func (m *Mock) Stream(ctx context.Context, req Request, emit func(Event)) error 
 		return nil
 	}
 
-	// Otherwise stream a text answer.
+	// Otherwise stream a text answer. Images are called out so the loop's
+	// multimodal path is observable without a vendor.
 	reply := "[mock] you said: " + lastUserText(req)
+	if n := lastUserImages(req); n > 0 {
+		reply = fmt.Sprintf("[mock] saw %d image(s); you said: %s", n, lastUserText(req))
+	}
 	words := strings.Fields(reply)
 	for _, w := range words {
 		if err := ctx.Err(); err != nil {
@@ -56,6 +61,23 @@ func (m *Mock) Stream(ctx context.Context, req Request, emit func(Event)) error 
 	emit(Event{Type: EventUsage, Usage: Usage{InputTokens: 8, OutputTokens: len(words)}})
 	emit(Event{Type: EventStop, StopReason: StopEndTurn})
 	return nil
+}
+
+// lastUserImages counts image blocks on the most recent user message.
+func lastUserImages(req Request) int {
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		if req.Messages[i].Role != "user" {
+			continue
+		}
+		n := 0
+		for _, b := range req.Messages[i].Content {
+			if b.Type == BlockImage && b.Image != nil {
+				n++
+			}
+		}
+		return n
+	}
+	return 0
 }
 
 func lastUserText(req Request) string {

@@ -118,6 +118,10 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		}
 	}
 
+	// Vision is deliberately absent here: routing swaps models per turn, so the
+	// agent loop resolves CapVision from the model each request actually uses.
+	// Deciding it once at build time would claim vision for models that lack it
+	// (a 400 per photo) or withhold it from models that have it.
 	caps := []string{provider.CapTools, provider.CapCaching}
 	opts := agent.Options{
 		Model:         model,

@@ -130,7 +130,7 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 		fmt.Fprintln(os.Stderr, "warning: setMyCommands:", err)
 	}
 
-	responder := func(ctx context.Context, chatID int64, user, text string) string {
+	responder := func(ctx context.Context, chatID int64, user, text string, images []telegram.Image) string {
 		// Allowlist gate: only permitted chats reach the model.
 		if len(allowed) > 0 && !allowed[chatID] {
 			fmt.Fprintf(os.Stderr, "blocked chat %d (%s): %q\n", chatID, user, clip(text, 60))
@@ -138,11 +138,12 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 		}
 		curProfile := identities.get(chatID, defaultProfile)
 
-		// Correction capture: after 👎, the next non-command message is recorded
-		// as a durable lesson for this identity, closing the feedback loop.
+		// Correction capture: after 👎, the next non-command text message is
+		// recorded as a durable lesson for this identity, closing the feedback
+		// loop. An image-only message can't be a lesson — fall through.
 		if pendingFeedback[chatID] {
 			delete(pendingFeedback, chatID)
-			if !strings.HasPrefix(strings.TrimSpace(text), "/") {
+			if t := strings.TrimSpace(text); t != "" && !strings.HasPrefix(t, "/") {
 				fb := memory.NewFeedbackTool(memory.NewStore(profile.MemoryDir(curProfile)))
 				in, _ := json.Marshal(map[string]string{"lesson": text})
 				if res, _ := fb.Run(ctx, in, nil); res.IsError {
@@ -183,6 +184,16 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 			return reply
 		}
 
+		// Refuse oversized images early with a usable hint instead of letting
+		// the provider 400 and the user see a generic apology.
+		for _, img := range images {
+			if len(img.Data) > maxInlineImageBytes {
+				return fmt.Sprintf("⚠ that image is %.1f MB — I can only read images up to %d MB. Sending it as a photo (not a file) compresses it automatically.",
+					float64(len(img.Data))/(1<<20), maxInlineImageBytes>>20)
+			}
+		}
+		content := userContent(text, images)
+
 		// Per-chat provider/model override (set via /model), else the launch flag.
 		provSlug := firstNonEmpty(sess.Provider, launchProvider)
 		ag, err := app.Build(ctx, app.Spec{
@@ -208,7 +219,7 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 		// models take several seconds, and Telegram clears the action after ~5s.
 		stopTyping := pulseTyping(ctx, bot, chatID)
 		bh := &agent.Collector{}
-		history, rerr := ag.Continue(ctx, sess.History, text, bh)
+		history, rerr := ag.ContinueWith(ctx, sess.History, content, bh)
 		stopTyping()
 
 		// Provider failover: a transport-level failure retries once on the
@@ -224,7 +235,7 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 			}); berr == nil {
 				stopTyping = pulseTyping(ctx, bot, chatID)
 				bh = &agent.Collector{}
-				history, rerr = ag2.Continue(ctx, sess.History, text, bh)
+				history, rerr = ag2.ContinueWith(ctx, sess.History, content, bh)
 				stopTyping()
 			}
 		}
@@ -313,6 +324,27 @@ func runTelegramBot(ctx context.Context, o telegramOptions) error {
 
 	fmt.Fprintf(os.Stderr, "telegram: bot up · default identity=%s · provider=%s\n", defaultProfile, launchProvider)
 	return bot.Run(ctx, responder, onCallback, func(e error) { fmt.Fprintln(os.Stderr, "telegram:", e) })
+}
+
+// maxInlineImageBytes caps images handed to the model. 5 MB is the tightest
+// per-image limit among vision providers (Anthropic); Telegram photos are
+// recompressed far below it — only images sent "as file" can exceed it.
+const maxInlineImageBytes = 5 << 20
+
+// userContent assembles the user-turn blocks: images first (vision models read
+// them best before the question), then the text/caption if any.
+func userContent(text string, images []telegram.Image) []provider.Block {
+	content := make([]provider.Block, 0, len(images)+1)
+	for _, img := range images {
+		content = append(content, provider.Block{
+			Type:  provider.BlockImage,
+			Image: &provider.ImageBlock{MediaType: img.MimeType, Data: img.Data},
+		})
+	}
+	if strings.TrimSpace(text) != "" {
+		content = append(content, provider.Block{Type: provider.BlockText, Text: text})
+	}
+	return content
 }
 
 // identityCommand handles /profile and /profiles — switching which identity a

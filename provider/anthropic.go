@@ -3,6 +3,7 @@ package provider
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -111,7 +112,7 @@ func (a *Anthropic) buildBody(req Request) map[string]any {
 		"model":      req.Model,
 		"max_tokens": maxTokens,
 		"stream":     true,
-		"messages":   anthropicMessages(req.Messages),
+		"messages":   anthropicMessages(req.Messages, req.HasCap(CapVision)),
 	}
 	if useOAuth {
 		body["metadata"] = map[string]any{"user_id": "harness"}
@@ -168,7 +169,9 @@ func systemBlocks(userSystem string, useOAuth, caching bool) any {
 
 // anthropicMessages translates neutral messages into Anthropic's content-block
 // shape. The "tool" role becomes a user message carrying tool_result blocks.
-func anthropicMessages(msgs []Message) []map[string]any {
+// vision reports whether the target model can see images; when false, image
+// blocks degrade to a text placeholder instead of a 400.
+func anthropicMessages(msgs []Message, vision bool) []map[string]any {
 	out := make([]map[string]any, 0, len(msgs))
 	for _, m := range msgs {
 		role := m.Role
@@ -180,6 +183,22 @@ func anthropicMessages(msgs []Message) []map[string]any {
 			switch b.Type {
 			case BlockText:
 				content = append(content, map[string]any{"type": "text", "text": b.Text})
+			case BlockImage:
+				if b.Image == nil {
+					continue
+				}
+				if !vision {
+					content = append(content, map[string]any{"type": "text", "text": ImagePlaceholder(b.Image)})
+					continue
+				}
+				content = append(content, map[string]any{
+					"type": "image",
+					"source": map[string]any{
+						"type":       "base64",
+						"media_type": b.Image.MediaType,
+						"data":       base64.StdEncoding.EncodeToString(b.Image.Data),
+					},
+				})
 			case BlockToolUse:
 				if b.ToolUse != nil {
 					input := b.ToolUse.Input

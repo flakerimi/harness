@@ -21,9 +21,19 @@ import (
 	"unicode/utf8"
 )
 
-// Responder turns an inbound message (from a chat) into a reply. Returning an
-// empty string sends nothing.
-type Responder func(ctx context.Context, chatID int64, user, text string) string
+// Responder turns an inbound message (from a chat) into a reply. text is the
+// message text (a media message's caption); images holds any downloaded photo
+// or image-file attachment, nil for plain text. Returning an empty string
+// sends nothing.
+type Responder func(ctx context.Context, chatID int64, user, text string, images []Image) string
+
+// Image is a downloaded inbound photo or image file, ready to hand to a
+// multimodal model. MimeType is what Telegram reports — "image/jpeg" for
+// photos, which Telegram always recompresses to JPEG.
+type Image struct {
+	MimeType string
+	Data     []byte
+}
 
 // Bot is a Telegram bot client + long-poll loop.
 type Bot struct {
@@ -49,10 +59,14 @@ type Update struct {
 	CallbackQuery *CallbackQuery `json:"callback_query"`
 }
 
-// Message is an inbound chat message.
+// Message is an inbound chat message. A media message carries its text in
+// Caption, not Text — Telegram never sets both.
 type Message struct {
-	MessageID int64  `json:"message_id"`
-	Text      string `json:"text"`
+	MessageID int64       `json:"message_id"`
+	Text      string      `json:"text"`
+	Caption   string      `json:"caption"`
+	Photo     []PhotoSize `json:"photo"`    // renditions of one photo, varying size
+	Document  *Document   `json:"document"` // a file attachment (may be an image)
 	Chat      struct {
 		ID int64 `json:"id"`
 	} `json:"chat"`
@@ -60,6 +74,51 @@ type Message struct {
 		Username  string `json:"username"`
 		FirstName string `json:"first_name"`
 	} `json:"from"`
+}
+
+// PhotoSize is one rendition of an inbound photo.
+type PhotoSize struct {
+	FileID   string `json:"file_id"`
+	Width    int    `json:"width"`
+	Height   int    `json:"height"`
+	FileSize int64  `json:"file_size"`
+}
+
+// Document is a file attachment. Images sent "as file" arrive here at full
+// quality instead of as recompressed Photo renditions.
+type Document struct {
+	FileID   string `json:"file_id"`
+	FileName string `json:"file_name"`
+	MimeType string `json:"mime_type"`
+	FileSize int64  `json:"file_size"`
+}
+
+// text returns the message's textual content — Text for plain messages, the
+// caption for media messages.
+func (m *Message) text() string {
+	if m.Text != "" {
+		return m.Text
+	}
+	return m.Caption
+}
+
+// imageFile picks the message's image content: the largest photo rendition, or
+// a document with an image mime type. ok is false when the message carries no
+// image (stickers, voice notes, non-image files).
+func (m *Message) imageFile() (fileID, mime string, ok bool) {
+	if len(m.Photo) > 0 {
+		best := m.Photo[0]
+		for _, p := range m.Photo[1:] {
+			if p.Width*p.Height > best.Width*best.Height {
+				best = p
+			}
+		}
+		return best.FileID, "image/jpeg", true
+	}
+	if m.Document != nil && strings.HasPrefix(m.Document.MimeType, "image/") {
+		return m.Document.FileID, m.Document.MimeType, true
+	}
+	return "", "", false
 }
 
 // CallbackQuery is the event fired when a user taps an inline-keyboard button.
@@ -248,6 +307,48 @@ func splitMessage(s string, maxUnits int) []string {
 	return chunks
 }
 
+// maxFileBytes caps a file download at the Bot API's own getFile limit —
+// Telegram refuses to serve anything larger to a bot, so reading past it can
+// only mean a truncated file.
+const maxFileBytes = 20 << 20
+
+// DownloadFile resolves a file_id via getFile and fetches the file's bytes
+// from Telegram's file endpoint.
+func (b *Bot) DownloadFile(ctx context.Context, fileID string) ([]byte, error) {
+	q := url.Values{}
+	q.Set("file_id", fileID)
+	raw, err := b.call(ctx, "getFile", q)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Result struct {
+			FilePath string `json:"file_path"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("telegram getFile: %w", err)
+	}
+	if out.Result.FilePath == "" {
+		return nil, fmt.Errorf("telegram getFile: no file_path for id %q", fileID)
+	}
+	u := fmt.Sprintf("%s/file/bot%s/%s", strings.TrimRight(b.apiBase, "/"), b.token, out.Result.FilePath)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := b.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return nil, fmt.Errorf("telegram file download: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, maxFileBytes))
+}
+
 // EditMessage replaces a message's text and inline keyboard in place — used to
 // drill from the provider list into a provider's models without new messages.
 func (b *Bot) EditMessage(ctx context.Context, chatID, messageID int64, text string, rows [][]Button) error {
@@ -311,10 +412,12 @@ func (b *Bot) call(ctx context.Context, method string, form url.Values) ([]byte,
 // AnswerCallback), the button's data, and the sender.
 type CallbackHandler func(ctx context.Context, chatID, messageID int64, callbackID, data, user string)
 
-// Run long-polls and dispatches text messages to the responder and button taps
-// to onCallback (may be nil), sending replies back. It returns when ctx is
-// cancelled. Transient poll errors are reported and retried after a short
-// back-off so the loop survives blips.
+// Run long-polls and dispatches messages to the responder and button taps to
+// onCallback (may be nil), sending replies back. A message's photo (largest
+// rendition) or image-file attachment is downloaded and handed to the
+// responder alongside the text. It returns when ctx is cancelled. Transient
+// poll errors are reported and retried after a short back-off so the loop
+// survives blips.
 func (b *Bot) Run(ctx context.Context, h Responder, onCallback CallbackHandler, onError func(error)) error {
 	for {
 		if ctx.Err() != nil {
@@ -340,9 +443,31 @@ func (b *Bot) Run(ctx context.Context, h Responder, onCallback CallbackHandler, 
 					cq := u.CallbackQuery
 					onCallback(ctx, cq.Message.Chat.ID, cq.Message.MessageID, cq.ID, cq.Data, cq.sender())
 				}
-			case u.Message != nil && strings.TrimSpace(u.Message.Text) != "":
-				reply := h(ctx, u.Message.Chat.ID, u.Message.sender(), u.Message.Text)
-				if err := b.Send(ctx, u.Message.Chat.ID, reply); err != nil && onError != nil {
+			case u.Message != nil:
+				m := u.Message
+				text := m.text()
+				var images []Image
+				if fileID, mime, ok := m.imageFile(); ok {
+					data, derr := b.DownloadFile(ctx, fileID)
+					if derr != nil {
+						if onError != nil {
+							onError(fmt.Errorf("image download: %w", derr))
+						}
+						if strings.TrimSpace(text) == "" {
+							// Nothing usable survived — say so rather than
+							// leaving the message silently unanswered.
+							_ = b.Send(ctx, m.Chat.ID, "⚠ I couldn't download that image — please try sending it again.")
+							continue
+						}
+					} else {
+						images = append(images, Image{MimeType: mime, Data: data})
+					}
+				}
+				if strings.TrimSpace(text) == "" && len(images) == 0 {
+					continue // stickers, voice notes, member joins — nothing to answer
+				}
+				reply := h(ctx, m.Chat.ID, m.sender(), text, images)
+				if err := b.Send(ctx, m.Chat.ID, reply); err != nil && onError != nil {
 					onError(err)
 				}
 			}

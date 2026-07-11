@@ -98,22 +98,51 @@ func (a *Agent) Run(ctx context.Context, userInput string, h Handler) error {
 	return err
 }
 
+// promptText is the part of a user message that routing and critique can act
+// on. An uncaptioned image still needs to say something, or classification
+// would score an empty string and pick a tier for nothing.
+func promptText(content []provider.Block) string {
+	var parts []string
+	images := 0
+	for _, b := range content {
+		switch b.Type {
+		case provider.BlockText:
+			if b.Text != "" {
+				parts = append(parts, b.Text)
+			}
+		case provider.BlockImage:
+			if b.Image != nil {
+				images++
+			}
+		}
+	}
+	if len(parts) == 0 && images > 0 {
+		return "(an image with no caption)"
+	}
+	return strings.Join(parts, "\n")
+}
+
 // Continue resumes a conversation: it appends the user's message to the prior
 // history, drives the loop until the model stops, and returns the full updated
 // history (user + assistant + tool messages). A session store can persist the
 // result and pass it back next turn for true multi-turn memory. On error it
 // returns the history accumulated so far so nothing is silently lost.
 func (a *Agent) Continue(ctx context.Context, history []provider.Message, userInput string, h Handler) ([]provider.Message, error) {
+	return a.ContinueWith(ctx, history, []provider.Block{{Type: provider.BlockText, Text: userInput}}, h)
+}
+
+// ContinueWith is Continue for a user message that carries more than text — an
+// image with a caption, say. Routing and critique still see only the text: they
+// reason about the request, not its attachments.
+func (a *Agent) ContinueWith(ctx context.Context, history []provider.Message, content []provider.Block, h Handler) ([]provider.Message, error) {
 	// Persisted histories can carry damage (malformed or dangling tool calls
 	// from clipped turns); repair before replay so one bad block can't wedge
 	// the session forever.
 	history = RepairHistory(history)
 	msgs := make([]provider.Message, 0, len(history)+2)
 	msgs = append(msgs, history...)
-	msgs = append(msgs, provider.Message{
-		Role:    "user",
-		Content: []provider.Block{{Type: provider.BlockText, Text: userInput}},
-	})
+	msgs = append(msgs, provider.Message{Role: "user", Content: content})
+	userInput := promptText(content)
 
 	tier := a.opts.BaseTier
 	if tier == "" {
@@ -316,6 +345,24 @@ func fumbled(m provider.Message) bool {
 	return len(m.Content) == 0
 }
 
+// withVision reconciles the vision flag with the model this request actually
+// uses. Routing and escalation swap models per turn, so vision cannot be a
+// build-time decision: a flag frozen at build could claim vision a routed
+// model lacks (turning every photo into a 400) or withhold it from one that
+// has it (degrading photos the model could have read).
+func withVision(caps []string, slug, model string) []string {
+	if provider.VisionCapable(slug, model) {
+		if slices.Contains(caps, provider.CapVision) {
+			return caps
+		}
+		return append(append(make([]string, 0, len(caps)+1), caps...), provider.CapVision)
+	}
+	if !slices.Contains(caps, provider.CapVision) {
+		return caps
+	}
+	return slices.DeleteFunc(slices.Clone(caps), func(c string) bool { return c == provider.CapVision })
+}
+
 // streamOne runs one model turn, accumulating streamed events into an assistant
 // message. Tool calls are tracked per content-block index so parallel calls
 // from a single turn don't get interleaved into one another.
@@ -336,7 +383,7 @@ func (a *Agent) stream(ctx context.Context, msgs []provider.Message, model strin
 		Messages:  a.assemble(ctx, msgs),
 		Tools:     provTools,
 		MaxTokens: a.opts.MaxTokens,
-		CapFlags:  a.opts.Caps,
+		CapFlags:  withVision(a.opts.Caps, a.prov.Name(), model),
 	}
 
 	var textBuf strings.Builder

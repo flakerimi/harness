@@ -141,7 +141,7 @@ func TestRunDispatchesAndReplies(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	responder := func(_ context.Context, chatID int64, user, text string) string {
+	responder := func(_ context.Context, chatID int64, user, text string, _ []Image) string {
 		return user + " said " + text + " in " + strconv.FormatInt(chatID, 10)
 	}
 	go func() { _ = b.Run(ctx, responder, nil, nil) }()
@@ -153,6 +153,186 @@ func TestRunDispatchesAndReplies(t *testing.T) {
 	defer mu.Unlock()
 	if len(sent) != 1 || !strings.Contains(sent[0], "Ada said ping in 7") {
 		t.Errorf("unexpected sent messages: %#v", sent)
+	}
+}
+
+// photoServer serves one getUpdates batch, then getFile/file-download for the
+// given file bytes, recording what the bot sends back.
+func photoServer(t *testing.T, updates string, files map[string][]byte, sent *[]string, sentOnce chan struct{}) *httptest.Server {
+	t.Helper()
+	var mu sync.Mutex
+	served := false
+	var closeOnce sync.Once
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/getUpdates"):
+			mu.Lock()
+			first := !served
+			served = true
+			mu.Unlock()
+			if first {
+				_, _ = w.Write([]byte(updates))
+				return
+			}
+			_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
+		case strings.HasSuffix(r.URL.Path, "/getFile"):
+			_ = r.ParseForm()
+			id := r.Form.Get("file_id")
+			if _, ok := files[id]; !ok {
+				_, _ = w.Write([]byte(`{"ok":false}`))
+				return
+			}
+			fmt.Fprintf(w, `{"ok":true,"result":{"file_path":"photos/%s.bin"}}`, id)
+		case strings.Contains(r.URL.Path, "/file/bot"):
+			for id, data := range files {
+				if strings.HasSuffix(r.URL.Path, "/photos/"+id+".bin") {
+					_, _ = w.Write(data)
+					return
+				}
+			}
+			http.Error(w, "no such file", http.StatusNotFound)
+		case strings.HasSuffix(r.URL.Path, "/sendMessage"):
+			_ = r.ParseForm()
+			mu.Lock()
+			*sent = append(*sent, r.Form.Get("text"))
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"ok":true,"result":{}}`))
+			closeOnce.Do(func() { close(sentOnce) })
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+}
+
+func TestRunDispatchesPhotoWithCaption(t *testing.T) {
+	// Two renditions — the largest must be picked, caption becomes the text.
+	updates := `{"ok":true,"result":[
+		{"update_id":1,"message":{"message_id":1,"caption":"what is this","chat":{"id":7},"from":{"first_name":"Ada"},
+			"photo":[{"file_id":"small","width":90,"height":90},{"file_id":"big","width":800,"height":600}]}}]}`
+	files := map[string][]byte{"big": []byte("BIGJPEG"), "small": []byte("nope")}
+
+	var sent []string
+	sentOnce := make(chan struct{})
+	srv := photoServer(t, updates, files, &sent, sentOnce)
+	defer srv.Close()
+
+	var gotText string
+	var gotImages []Image
+	responder := func(_ context.Context, _ int64, _, text string, images []Image) string {
+		gotText, gotImages = text, images
+		return "seen"
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	b := botTo(srv.URL, "T")
+	go func() { _ = b.Run(ctx, responder, nil, nil) }()
+	<-sentOnce
+	cancel()
+
+	if gotText != "what is this" {
+		t.Errorf("text = %q, want the caption", gotText)
+	}
+	if len(gotImages) != 1 {
+		t.Fatalf("images = %d, want 1", len(gotImages))
+	}
+	if string(gotImages[0].Data) != "BIGJPEG" {
+		t.Errorf("image data = %q — largest rendition not picked", gotImages[0].Data)
+	}
+	if gotImages[0].MimeType != "image/jpeg" {
+		t.Errorf("mime = %q, want image/jpeg", gotImages[0].MimeType)
+	}
+}
+
+func TestRunDispatchesImageDocument(t *testing.T) {
+	// An uncaptioned PNG sent "as file": document mime rides along, and the
+	// responder is invoked with empty text.
+	updates := `{"ok":true,"result":[
+		{"update_id":1,"message":{"message_id":1,"chat":{"id":7},"from":{"first_name":"Ada"},
+			"document":{"file_id":"doc1","file_name":"shot.png","mime_type":"image/png","file_size":4}}}]}`
+	files := map[string][]byte{"doc1": []byte("PNG!")}
+
+	var sent []string
+	sentOnce := make(chan struct{})
+	srv := photoServer(t, updates, files, &sent, sentOnce)
+	defer srv.Close()
+
+	var gotText string
+	var gotImages []Image
+	responder := func(_ context.Context, _ int64, _, text string, images []Image) string {
+		gotText, gotImages = text, images
+		return "seen"
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	b := botTo(srv.URL, "T")
+	go func() { _ = b.Run(ctx, responder, nil, nil) }()
+	<-sentOnce
+	cancel()
+
+	if gotText != "" {
+		t.Errorf("text = %q, want empty (no caption)", gotText)
+	}
+	if len(gotImages) != 1 || string(gotImages[0].Data) != "PNG!" || gotImages[0].MimeType != "image/png" {
+		t.Errorf("images = %#v", gotImages)
+	}
+}
+
+func TestRunPhotoDownloadFailureTellsUser(t *testing.T) {
+	// getFile fails for this id: an uncaptioned photo must produce an apology
+	// to the chat, and the responder must NOT run.
+	updates := `{"ok":true,"result":[
+		{"update_id":1,"message":{"message_id":1,"chat":{"id":7},"from":{"first_name":"Ada"},
+			"photo":[{"file_id":"missing","width":90,"height":90}]}}]}`
+
+	var sent []string
+	sentOnce := make(chan struct{})
+	srv := photoServer(t, updates, map[string][]byte{}, &sent, sentOnce)
+	defer srv.Close()
+
+	responded := false
+	responder := func(_ context.Context, _ int64, _, _ string, _ []Image) string {
+		responded = true
+		return "should not happen"
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	b := botTo(srv.URL, "T")
+	go func() { _ = b.Run(ctx, responder, nil, nil) }()
+	<-sentOnce
+	cancel()
+
+	if responded {
+		t.Error("responder ran despite failed image download and no caption")
+	}
+	if len(sent) != 1 || !strings.Contains(sent[0], "couldn't download") {
+		t.Errorf("sent = %#v, want a download apology", sent)
+	}
+}
+
+func TestDownloadFile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/getFile"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"file_path":"photos/x.jpg"}}`))
+		case r.URL.Path == "/file/botT/photos/x.jpg":
+			_, _ = w.Write([]byte("JPEGBYTES"))
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	data, err := botTo(srv.URL, "T").DownloadFile(context.Background(), "abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "JPEGBYTES" {
+		t.Errorf("data = %q", data)
 	}
 }
 
