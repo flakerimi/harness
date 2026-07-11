@@ -78,7 +78,12 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		return nil, err
 	}
 
-	reg, err := Connectors(spec.Bash, spec.Profile).Tools(ctx)
+	// Bash is opt-in per surface (-bash), or fleet-wide via HARNESS_BASH=1 —
+	// the way a deployed daemon enables curl/jq for every surface (chat, API,
+	// scheduler, tasks) without threading a flag through each one. Trusted
+	// boxes only: bash runs unsandboxed in the daemon's container.
+	bash := spec.Bash || os.Getenv("HARNESS_BASH") == "1"
+	reg, err := Connectors(bash, spec.Profile).Tools(ctx)
 	if err != nil {
 		return nil, err
 	}
