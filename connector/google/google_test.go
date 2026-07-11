@@ -92,8 +92,64 @@ func TestStatusAndToolsGate(t *testing.T) {
 	if !c.Status(context.Background()).Connected {
 		t.Error("should be connected after credentials saved")
 	}
-	if ts, _ := c.Tools(context.Background()); len(ts) != 8 {
-		t.Errorf("want 8 tools (calendar + gmail read/draft/send/mark/attachment) after login, got %d", len(ts))
+	if ts, _ := c.Tools(context.Background()); len(ts) != 9 {
+		t.Errorf("want 9 tools (calendar read/get/create + gmail read/draft/send/mark/attachment) after login, got %d", len(ts))
+	}
+}
+
+func TestCalendarCreateTool(t *testing.T) {
+	var gotPath string
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"evt-1","htmlLink":"https://calendar.google.com/event?eid=x"}`))
+	}))
+	defer srv.Close()
+
+	c := connWithServer(t, srv.URL)
+	in, _ := json.Marshal(map[string]any{
+		"summary":  "Check-in at hotel",
+		"start":    "2026-07-13T14:00:00+02:00",
+		"end":      "2026-07-13T14:30:00+02:00",
+		"location": "Tirana",
+	})
+	res, err := (&calendarCreateTool{c: c}).Run(context.Background(), in, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError || !strings.Contains(res.Content, "evt-1") {
+		t.Fatalf("create result = %q err=%v", res.Content, res.IsError)
+	}
+	if gotPath != "/calendar/v3/calendars/primary/events" {
+		t.Fatalf("path = %s", gotPath)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(gotBody, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["summary"] != "Check-in at hotel" {
+		t.Errorf("summary = %v", payload["summary"])
+	}
+	if start := payload["start"].(map[string]any); start["dateTime"] != "2026-07-13T14:00:00+02:00" {
+		t.Errorf("start = %v", start)
+	}
+
+	// All-day form: a bare date maps to {"date": …}, not {"dateTime": …}.
+	in, _ = json.Marshal(map[string]any{"summary": "Trip", "start": "2026-07-13", "end": "2026-07-14"})
+	if res, _ := (&calendarCreateTool{c: c}).Run(context.Background(), in, nil); res.IsError {
+		t.Fatalf("all-day create errored: %s", res.Content)
+	}
+	_ = json.Unmarshal(gotBody, &payload)
+	if start := payload["start"].(map[string]any); start["date"] != "2026-07-13" {
+		t.Errorf("all-day start = %v", start)
+	}
+
+	// Missing fields fail cleanly.
+	in, _ = json.Marshal(map[string]any{"summary": "x"})
+	if res, _ := (&calendarCreateTool{c: c}).Run(context.Background(), in, nil); !res.IsError {
+		t.Error("missing start/end should error")
 	}
 }
 

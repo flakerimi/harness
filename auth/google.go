@@ -26,7 +26,9 @@ var GoogleDefaultScopes = []string{
 	"openid",
 	"https://www.googleapis.com/auth/userinfo.email",
 	"https://www.googleapis.com/auth/calendar.readonly",
-	"https://www.googleapis.com/auth/calendar.events.readonly",
+	// events (read/write) lets the assistant create calendar entries; accounts
+	// connected before it was added must reconnect to grant it.
+	"https://www.googleapis.com/auth/calendar.events",
 	"https://www.googleapis.com/auth/gmail.readonly",
 	"https://www.googleapis.com/auth/gmail.compose",
 	// modify covers label changes (mark read, archive) — accounts connected

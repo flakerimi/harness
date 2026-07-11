@@ -49,7 +49,7 @@ func (c *Connector) Status(context.Context) connector.Status {
 	if _, err := c.store.Load("google"); err != nil {
 		return connector.Status{Connected: false, Detail: "not logged in — run: harness login -provider google"}
 	}
-	return connector.Status{Connected: true, Detail: "calendar + gmail (read + draft + send + mark + attachments)"}
+	return connector.Status{Connected: true, Detail: "calendar (read + create) + gmail (read + draft + send + mark + attachments)"}
 }
 
 func (c *Connector) Tools(context.Context) ([]tool.Tool, error) {
@@ -61,6 +61,7 @@ func (c *Connector) Tools(context.Context) ([]tool.Tool, error) {
 	return []tool.Tool{
 		&calendarListTool{c: c},
 		&calendarGetTool{c: c},
+		&calendarCreateTool{c: c},
 		&gmailListTool{c: c},
 		&gmailGetTool{c: c},
 		&gmailDraftTool{c: c},
@@ -307,6 +308,81 @@ func (t *calendarGetTool) Run(ctx context.Context, input json.RawMessage, _ *too
 		return tool.Result{Content: "parse: " + err.Error(), IsError: true}, nil
 	}
 	return tool.Result{Content: formatEvent(e)}, nil
+}
+
+// calendarCreateTool writes an event — the assistant moves from reading the
+// user's day to shaping it. Start/end demand explicit offsets so "14:00"
+// can't silently land in the wrong timezone.
+type calendarCreateTool struct{ c *Connector }
+
+func (calendarCreateTool) Spec() tool.Spec {
+	return tool.Spec{
+		Name: "calendar_create_event",
+		Description: "Create a Google Calendar event. start/end take RFC3339 with a UTC offset for timed events (e.g. 2026-07-13T14:00:00+02:00) or YYYY-MM-DD for all-day. Requires the calendar.events scope — an insufficient-permission error means the account was connected before write existed and must reconnect (harness connect google / the /integration google flow).",
+		Writes:      true,
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"summary":     map[string]any{"type": "string", "description": "Event title."},
+				"start":       map[string]any{"type": "string", "description": "RFC3339 with offset, or YYYY-MM-DD for all-day."},
+				"end":         map[string]any{"type": "string", "description": "Same format as start; must be after it."},
+				"description": map[string]any{"type": "string", "description": "Optional notes."},
+				"location":    map[string]any{"type": "string", "description": "Optional location."},
+				"calendar_id": map[string]any{"type": "string", "description": "Calendar id (default 'primary')."},
+			},
+			"required": []string{"summary", "start", "end"},
+		},
+	}
+}
+
+func (t *calendarCreateTool) Run(ctx context.Context, input json.RawMessage, _ *tool.Env) (tool.Result, error) {
+	var args struct {
+		Summary     string `json:"summary"`
+		Start       string `json:"start"`
+		End         string `json:"end"`
+		Description string `json:"description"`
+		Location    string `json:"location"`
+		CalendarID  string `json:"calendar_id"`
+	}
+	if err := json.Unmarshal(input, &args); err != nil {
+		return tool.Result{Content: "invalid input: " + err.Error(), IsError: true}, nil
+	}
+	if args.Summary == "" || args.Start == "" || args.End == "" {
+		return tool.Result{Content: "summary, start, and end are required", IsError: true}, nil
+	}
+	// A bare YYYY-MM-DD is an all-day event; anything with a time must carry
+	// an explicit offset in the string, which Google validates.
+	timeField := func(v string) map[string]string {
+		if len(v) == len("2006-01-02") && !strings.Contains(v, "T") {
+			return map[string]string{"date": v}
+		}
+		return map[string]string{"dateTime": v}
+	}
+	payload := map[string]any{
+		"summary": args.Summary,
+		"start":   timeField(args.Start),
+		"end":     timeField(args.End),
+	}
+	if args.Description != "" {
+		payload["description"] = args.Description
+	}
+	if args.Location != "" {
+		payload["location"] = args.Location
+	}
+	body, _ := json.Marshal(payload)
+	raw, err := t.c.post(ctx, "/calendar/v3/calendars/"+url.PathEscape(orDefault(args.CalendarID, "primary"))+"/events", body)
+	if err != nil {
+		return tool.Result{Content: err.Error(), IsError: true}, nil
+	}
+	var created struct {
+		ID       string `json:"id"`
+		HTMLLink string `json:"htmlLink"`
+	}
+	if err := json.Unmarshal(raw, &created); err != nil {
+		return tool.Result{Content: "created, but parse: " + err.Error(), IsError: true}, nil
+	}
+	return tool.Result{Content: fmt.Sprintf("created %q %s → %s (id %s) %s",
+		args.Summary, args.Start, args.End, created.ID, created.HTMLLink)}, nil
 }
 
 func orDefault(v, def string) string {
