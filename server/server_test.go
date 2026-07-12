@@ -13,6 +13,7 @@ import (
 
 	"github.com/flakerimi/harness/agent"
 	"github.com/flakerimi/harness/auth"
+	"github.com/flakerimi/harness/inbox"
 	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/session"
 	"github.com/flakerimi/harness/task"
@@ -193,6 +194,57 @@ func TestPushRegister(t *testing.T) {
 		strings.NewReader(`{"token":"x"}`)))
 	if rec.Code != http.StatusNotImplemented {
 		t.Errorf("unconfigured = %d", rec.Code)
+	}
+}
+
+func TestDeliveriesAndFeedback(t *testing.T) {
+	srv := newTestServer(t)
+	dir := t.TempDir()
+	srv.Inbox = func(profile string) *inbox.Store { return inbox.NewStore(dir) }
+	var gotLesson string
+	srv.Feedback = func(profile, lesson string) error {
+		gotLesson = lesson
+		return nil
+	}
+
+	// Seed two deliveries, list newest-first with an unread count.
+	store := inbox.NewStore(dir)
+	_, _ = store.Add("morning brief")
+	second, _ := store.Add("task result")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/deliveries", nil))
+	var out struct {
+		Unread int `json:"unread"`
+		Items  []struct {
+			ID   string `json:"id"`
+			Text string `json:"text"`
+		} `json:"items"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if rec.Code != http.StatusOK || out.Unread != 2 || len(out.Items) != 2 || out.Items[0].Text != "task result" {
+		t.Fatalf("deliveries = %d %+v", rec.Code, out)
+	}
+
+	// Mark one read by id.
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/deliveries/read",
+		strings.NewReader(`{"ids":["`+second.ID+`"]}`)))
+	if rec.Code != http.StatusOK || store.Unread() != 1 {
+		t.Errorf("mark read = %d, unread = %d", rec.Code, store.Unread())
+	}
+
+	// Feedback lesson reaches the injected sink; empty lesson is a 400.
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/feedback",
+		strings.NewReader(`{"lesson":"always use trash not rm"}`)))
+	if rec.Code != http.StatusOK || gotLesson != "always use trash not rm" {
+		t.Errorf("feedback = %d lesson=%q", rec.Code, gotLesson)
+	}
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/feedback",
+		strings.NewReader(`{}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("empty lesson = %d", rec.Code)
 	}
 }
 

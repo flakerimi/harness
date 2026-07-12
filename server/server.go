@@ -22,6 +22,7 @@ import (
 
 	"github.com/flakerimi/harness/agent"
 	"github.com/flakerimi/harness/auth"
+	"github.com/flakerimi/harness/inbox"
 	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/session"
 	"github.com/flakerimi/harness/task"
@@ -78,6 +79,70 @@ type Server struct {
 	// to it (the same GoogleOAuth flow the chat surfaces use).
 	Connectors func(ctx context.Context, profile string) []ConnectorInfo
 	AuthStore  func(profile string) *auth.Store
+
+	// Inbox, when set, enables the deliveries feed — the app-side archive of
+	// scheduled runs and task results (`app:<profile>` deliveries land here).
+	Inbox func(profile string) *inbox.Store
+
+	// Feedback, when set, enables POST /v1/feedback — a client's 👎 correction
+	// becomes a durable lesson in the identity's memory, the same loop the
+	// Telegram buttons ran.
+	Feedback func(profile, lesson string) error
+}
+
+func (s *Server) handleDeliveries(w http.ResponseWriter, r *http.Request) {
+	if s.Inbox == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "deliveries not configured"})
+		return
+	}
+	prof := orDefault(r.URL.Query().Get("profile"), s.DefaultProfile)
+	store := s.Inbox(prof)
+	items := store.List()
+	// Newest first for clients; the store keeps oldest-first on disk.
+	out := make([]inbox.Item, 0, len(items))
+	for i := len(items) - 1; i >= 0; i-- {
+		out = append(out, items[i])
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"profile": prof, "unread": store.Unread(), "items": out})
+}
+
+func (s *Server) handleDeliveriesRead(w http.ResponseWriter, r *http.Request) {
+	if s.Inbox == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "deliveries not configured"})
+		return
+	}
+	var req struct {
+		Profile string   `json:"profile"`
+		IDs     []string `json:"ids"` // empty = mark everything read
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	prof := orDefault(req.Profile, s.DefaultProfile)
+	if err := s.Inbox(prof).MarkRead(req.IDs...); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"profile": prof, "status": "ok"})
+}
+
+func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
+	if s.Feedback == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "feedback not configured"})
+		return
+	}
+	var req struct {
+		Profile string `json:"profile"`
+		Lesson  string `json:"lesson"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Lesson) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "lesson is required"})
+		return
+	}
+	prof := orDefault(req.Profile, s.DefaultProfile)
+	if err := s.Feedback(prof, strings.TrimSpace(req.Lesson)); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"profile": prof, "status": "saved"})
 }
 
 // ConnectorInfo is one integration's live status, as shown to clients.
@@ -158,6 +223,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/push/register", s.guard(s.handlePushRegister))
 	mux.Handle("GET /v1/connectors", s.guard(s.handleConnectors))
 	mux.Handle("POST /v1/connectors/google/connect", s.guard(s.handleGoogleConnectStart))
+	mux.Handle("GET /v1/deliveries", s.guard(s.handleDeliveries))
+	mux.Handle("POST /v1/deliveries/read", s.guard(s.handleDeliveriesRead))
+	mux.Handle("POST /v1/feedback", s.guard(s.handleFeedback))
 	if s.Tasks != nil {
 		mux.Handle("GET /v1/tasks", s.guard(s.handleTasks))
 		mux.Handle("POST /v1/tasks", s.guard(s.handleTaskAdd))

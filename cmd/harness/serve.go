@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
@@ -16,6 +17,8 @@ import (
 	"github.com/flakerimi/harness/app"
 	"github.com/flakerimi/harness/auth"
 	"github.com/flakerimi/harness/channel/apns"
+	"github.com/flakerimi/harness/inbox"
+	"github.com/flakerimi/harness/memory"
 	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/server"
 	"github.com/flakerimi/harness/session"
@@ -98,6 +101,9 @@ func buildAPIServer(o apiOptions) *server.Server {
 				Bash:      o.Bash,
 				Compact:   o.Compact,
 				MaxTurns:  40,
+				// Background work queued from an app chat reports back to the
+				// identity's own inbox + push banner.
+				TaskDeliver: "app:" + profileName,
 			})
 		},
 		Sessions: func(profileName string) *session.Store {
@@ -125,6 +131,24 @@ func buildAPIServer(o apiOptions) *server.Server {
 		},
 		AuthStore: func(profileName string) *auth.Store {
 			return auth.NewStore(profile.AuthFile(profileName))
+		},
+		// The app-side archive of scheduled runs and task results.
+		Inbox: func(profileName string) *inbox.Store {
+			return inbox.NewStore(profile.DataDir(profileName))
+		},
+		// 👎 corrections become durable lessons — the same loop the Telegram
+		// feedback buttons ran, now first-class over HTTP.
+		Feedback: func(profileName, lesson string) error {
+			fb := memory.NewFeedbackTool(memory.NewStore(profile.MemoryDir(profileName)))
+			in, _ := json.Marshal(map[string]string{"lesson": lesson})
+			res, err := fb.Run(context.Background(), in, nil)
+			if err != nil {
+				return err
+			}
+			if res.IsError {
+				return fmt.Errorf("%s", res.Content)
+			}
+			return nil
 		},
 	}
 	// Published pages: the default identity's workspace pub/ dir is served at

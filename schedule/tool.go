@@ -52,7 +52,7 @@ func (a addTool) Spec() tool.Spec {
 				},
 				"deliver": map[string]any{
 					"type":        "string",
-					"description": "Optional: where output goes, overriding the default reply target. Forms: 'telegram:<chatID>', 'push:<profile>', 'webhook:<url>'; combine with | to reach several ('telegram:123|push:personal').",
+					"description": "Optional: where output goes, overriding the default reply target. Forms: 'app:<profile>' (the identity's own app: inbox + push banner), 'telegram:<chatID>', 'push:<profile>' (banner only), 'webhook:<url>'; combine with | to reach several.",
 				},
 			},
 			"required": []string{"id", "spec", "prompt"},

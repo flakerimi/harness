@@ -18,6 +18,7 @@ import (
 	"github.com/flakerimi/harness/channel/apns"
 	"github.com/flakerimi/harness/channel/telegram"
 	"github.com/flakerimi/harness/connector/plugin"
+	"github.com/flakerimi/harness/inbox"
 	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/schedule"
 )
@@ -339,6 +340,17 @@ func deliver(ctx context.Context, target, text string) error {
 	case "push", "apns":
 		// dest is the identity whose registered devices get the alert.
 		return deliverPush(ctx, dest, text)
+	case "app":
+		// The identity's own app: persist to its inbox (the durable record),
+		// then announce with a push banner. The banner is best-effort — the
+		// delivery already succeeded once it's in the feed.
+		if _, err := inbox.NewStore(profile.DataDir(dest)).Add(text); err != nil {
+			return fmt.Errorf("app inbox: %w", err)
+		}
+		if err := deliverPush(ctx, dest, text); err != nil {
+			fmt.Fprintf(os.Stderr, "deliver: app:%s stored, push banner failed: %v\n", dest, err)
+		}
+		return nil
 	default:
 		// A plugin can extend deliver kinds: any discovered executable whose
 		// manifest advertises this kind handles the target.
@@ -346,7 +358,7 @@ func deliver(ctx context.Context, target, text string) error {
 		if p, ok := plugin.FindDeliverer(plugs, kind); ok {
 			return p.Deliver(ctx, kind, dest, text)
 		}
-		return fmt.Errorf("unknown deliver kind %q (built-in: telegram, webhook, push; no plugin advertises it)", kind)
+		return fmt.Errorf("unknown deliver kind %q (built-in: telegram, webhook, push, app; no plugin advertises it)", kind)
 	}
 }
 
