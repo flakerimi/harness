@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/flakerimi/harness/provider"
 )
@@ -119,13 +120,20 @@ func (s *Store) Reset(id string) error {
 	return nil
 }
 
-// Meta is a lightweight session listing entry.
+// Meta is a lightweight session listing entry. Title and Preview make a
+// conversations list readable without loading each session client-side: the
+// title is the opening user message (the Claude-app convention), the preview
+// is the latest text either side wrote.
 type Meta struct {
-	ID    string
-	Turns int
+	ID      string
+	Turns   int
+	Title   string
+	Preview string
+	Updated time.Time
 }
 
-// List returns the stored sessions (sorted by id) with their turn counts.
+// List returns the stored sessions (sorted by id) with their turn counts and
+// list metadata.
 func (s *Store) List() ([]Meta, error) {
 	matches, _ := filepath.Glob(filepath.Join(s.dir, "*.json"))
 	var out []Meta
@@ -135,10 +143,60 @@ func (s *Store) List() ([]Meta, error) {
 		if err != nil {
 			continue // skip unreadable/corrupt files in a listing
 		}
-		out = append(out, Meta{ID: id, Turns: sess.Turns()})
+		var updated time.Time
+		if fi, err := os.Stat(p); err == nil {
+			updated = fi.ModTime()
+		}
+		out = append(out, Meta{
+			ID:      id,
+			Turns:   sess.Turns(),
+			Title:   clipText(firstUserText(sess.History), 60),
+			Preview: clipText(lastText(sess.History), 90),
+			Updated: updated,
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+// firstUserText is the conversation's opening user message.
+func firstUserText(h []provider.Message) string {
+	for _, m := range h {
+		if m.Role != "user" {
+			continue
+		}
+		for _, b := range m.Content {
+			if b.Type == provider.BlockText && strings.TrimSpace(b.Text) != "" {
+				return b.Text
+			}
+		}
+	}
+	return ""
+}
+
+// lastText is the newest text block either side wrote — the list preview.
+func lastText(h []provider.Message) string {
+	for i := len(h) - 1; i >= 0; i-- {
+		if h[i].Role != "user" && h[i].Role != "assistant" {
+			continue
+		}
+		for j := len(h[i].Content) - 1; j >= 0; j-- {
+			b := h[i].Content[j]
+			if b.Type == provider.BlockText && strings.TrimSpace(b.Text) != "" {
+				return b.Text
+			}
+		}
+	}
+	return ""
+}
+
+// clipText flattens newlines and bounds length for list rows.
+func clipText(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
 }
 
 // Recent returns up to n sessions that have at least one user turn, most

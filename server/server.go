@@ -18,7 +18,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/flakerimi/harness/agent"
 	"github.com/flakerimi/harness/auth"
@@ -220,6 +222,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/models", s.guard(s.handleModels))
 	mux.Handle("GET /v1/sessions", s.guard(s.handleSessions))
 	mux.Handle("GET /v1/sessions/{id}", s.guard(s.handleSessionHistory))
+	mux.Handle("DELETE /v1/sessions/{id}", s.guard(s.handleSessionDelete))
 	mux.Handle("POST /v1/push/register", s.guard(s.handlePushRegister))
 	mux.Handle("GET /v1/connectors", s.guard(s.handleConnectors))
 	mux.Handle("POST /v1/connectors/google/connect", s.guard(s.handleGoogleConnectStart))
@@ -472,11 +475,27 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	// Conversations list: most recently touched first, like any chat app.
+	sort.Slice(metas, func(i, j int) bool { return metas[i].Updated.After(metas[j].Updated) })
 	out := make([]map[string]any, 0, len(metas))
 	for _, m := range metas {
-		out = append(out, map[string]any{"id": m.ID, "turns": m.Turns})
+		out = append(out, map[string]any{
+			"id": m.ID, "turns": m.Turns,
+			"title": m.Title, "preview": m.Preview,
+			"updated": m.Updated.Format(time.RFC3339),
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"profile": prof, "sessions": out})
+}
+
+// handleSessionDelete removes a conversation — swipe-to-delete in the app.
+func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
+	prof := orDefault(r.URL.Query().Get("profile"), s.DefaultProfile)
+	if err := s.Sessions(prof).Reset(r.PathValue("id")); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"profile": prof, "status": "deleted"})
 }
 
 func (s *Server) handleSessionHistory(w http.ResponseWriter, r *http.Request) {
