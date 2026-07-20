@@ -113,7 +113,10 @@ func DefaultTable() *Table {
 	// Kimi (Moonshot) — k2.6 general, k2.5 for the fast tier.
 	t.Set("kimi", TierReasoning, "kimi-k2.6")
 	t.Set("kimi", TierBalanced, "kimi-k2.6")
-	t.Set("kimi", TierFast, "kimi-k2.5")
+	// Not kimi-k2.5: the k2 line always thinks, so a small-budget call (the
+	// tier classifier) burns its tokens on reasoning and returns nothing.
+	// The v1 line answers directly; 32k leaves room for a persona prompt.
+	t.Set("kimi", TierFast, "moonshot-v1-32k")
 
 	// Fireworks — hosted open models; deepseek-v4-pro reasons, kimi for the rest.
 	t.Set("fireworks", TierReasoning, "accounts/fireworks/models/deepseek-v4-pro")

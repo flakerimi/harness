@@ -258,7 +258,7 @@ func (a *Agent) classify(ctx context.Context, task string, fallback router.Tier)
 	var sb strings.Builder
 	err := a.prov.Stream(ctx, provider.Request{
 		Model:     a.modelFor(router.TierFast),
-		MaxTokens: 16,
+		MaxTokens: 64,
 		System:    "Classify the difficulty of the user's task for model routing. Reply with exactly one word: fast, balanced, or reasoning. Use 'fast' for simple lookups, extraction, or formatting; 'reasoning' for hard multi-step planning, analysis, or coding; 'balanced' otherwise.",
 		Messages:  []provider.Message{{Role: "user", Content: []provider.Block{{Type: provider.BlockText, Text: task}}}},
 	}, func(ev provider.Event) {
