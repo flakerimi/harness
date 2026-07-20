@@ -182,7 +182,10 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		}
 		opts.System = prof.Persona
 		opts.BaseTier = prof.BaseTier
-		opts.Classify = false // the profile sets the orchestrator's tier
+		// The profile's base tier is the default; a surface that opts into
+		// classification still gets per-task tiering (fast lookups shouldn't
+		// pay the reasoning model just because the identity defaults high).
+		opts.Classify = spec.Classify
 		if prof.Delegate {
 			workerSystem := prof.WorkerPersona
 			if skillDiscovery != "" {

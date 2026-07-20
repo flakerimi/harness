@@ -97,11 +97,13 @@ func buildAPIServer(o apiOptions) *server.Server {
 				Profile:   profileName,
 				Tier:      "reasoning",
 				Route:     true,
-				Classify:  false,
-				Escalate:  true,
-				Bash:      o.Bash,
-				Compact:   o.Compact,
-				MaxTurns:  40,
+				// Chat turns vary wildly; classify each one so a quick lookup
+				// rides the fast tier instead of always paying reasoning.
+				Classify: true,
+				Escalate: true,
+				Bash:     o.Bash,
+				Compact:  o.Compact,
+				MaxTurns: 40,
 				// Background work queued from an app chat reports back to the
 				// identity's own inbox + push banner.
 				TaskDeliver: "app:" + profileName,
