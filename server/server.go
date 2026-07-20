@@ -26,6 +26,7 @@ import (
 	"github.com/flakerimi/harness/auth"
 	"github.com/flakerimi/harness/inbox"
 	"github.com/flakerimi/harness/provider"
+	"github.com/flakerimi/harness/schedule"
 	"github.com/flakerimi/harness/session"
 	"github.com/flakerimi/harness/task"
 	"github.com/flakerimi/harness/tool"
@@ -90,6 +91,38 @@ type Server struct {
 	// becomes a durable lesson in the identity's memory, the same loop the
 	// Telegram buttons ran.
 	Feedback func(profile, lesson string) error
+
+	// Schedules, when set, enables GET /v1/schedules — the identity's proactive
+	// clock, read-only, so a client's home screen can show what runs and when.
+	Schedules func() ([]schedule.Task, error)
+}
+
+func (s *Server) handleSchedules(w http.ResponseWriter, _ *http.Request) {
+	if s.Schedules == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "schedules not configured"})
+		return
+	}
+	tasks, err := s.Schedules()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	// Dashboard order: what fires next first; disabled tasks sink; one-shots
+	// that already fired (no next run) sit between.
+	sort.SliceStable(tasks, func(i, j int) bool {
+		a, b := tasks[i], tasks[j]
+		if a.Enabled != b.Enabled {
+			return a.Enabled
+		}
+		if a.NextRun.IsZero() != b.NextRun.IsZero() {
+			return !a.NextRun.IsZero()
+		}
+		return a.NextRun.Before(b.NextRun)
+	})
+	if tasks == nil {
+		tasks = []schedule.Task{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"schedules": tasks})
 }
 
 func (s *Server) handleDeliveries(w http.ResponseWriter, r *http.Request) {
@@ -229,6 +262,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/deliveries", s.guard(s.handleDeliveries))
 	mux.Handle("POST /v1/deliveries/read", s.guard(s.handleDeliveriesRead))
 	mux.Handle("POST /v1/feedback", s.guard(s.handleFeedback))
+	mux.Handle("GET /v1/schedules", s.guard(s.handleSchedules))
 	if s.Tasks != nil {
 		mux.Handle("GET /v1/tasks", s.guard(s.handleTasks))
 		mux.Handle("POST /v1/tasks", s.guard(s.handleTaskAdd))

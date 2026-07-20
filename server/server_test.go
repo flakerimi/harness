@@ -8,13 +8,16 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flakerimi/harness/agent"
 	"github.com/flakerimi/harness/auth"
 	"github.com/flakerimi/harness/inbox"
 	"github.com/flakerimi/harness/provider"
+	"github.com/flakerimi/harness/schedule"
 	"github.com/flakerimi/harness/session"
 	"github.com/flakerimi/harness/task"
 	"github.com/flakerimi/harness/tool"
@@ -476,5 +479,44 @@ func TestGoogleOAuthCallbackRoute(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/oauth/google/callback", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("missing params = %d", rec.Code)
+	}
+}
+
+func TestSchedulesEndpoint(t *testing.T) {
+	srv := newTestServer(t)
+
+	// Not wired → honest 501.
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/schedules", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("unwired schedules should be 501, got %d", rec.Code)
+	}
+
+	now := time.Now()
+	srv.Schedules = func() ([]schedule.Task, error) {
+		return []schedule.Task{
+			{ID: "s1", Profile: "personal", Prompt: "later", Spec: "daily 09:00", Enabled: true, NextRun: now.Add(2 * time.Hour)},
+			{ID: "s2", Profile: "personal", Prompt: "disabled", Spec: "daily 07:00", Enabled: false},
+			{ID: "s3", Profile: "personal", Prompt: "soon", Spec: "every 30m", Enabled: true, NextRun: now.Add(10 * time.Minute)},
+		}, nil
+	}
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/schedules", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("schedules = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	var got struct {
+		Schedules []schedule.Task `json:"schedules"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, len(got.Schedules))
+	for _, s := range got.Schedules {
+		ids = append(ids, s.ID)
+	}
+	// Soonest enabled first, disabled last.
+	if want := []string{"s3", "s1", "s2"}; !slices.Equal(ids, want) {
+		t.Errorf("order = %v, want %v", ids, want)
 	}
 }

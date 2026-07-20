@@ -20,6 +20,7 @@ import (
 	"github.com/flakerimi/harness/inbox"
 	"github.com/flakerimi/harness/memory"
 	"github.com/flakerimi/harness/profile"
+	"github.com/flakerimi/harness/schedule"
 	"github.com/flakerimi/harness/server"
 	"github.com/flakerimi/harness/session"
 	"github.com/flakerimi/harness/task"
@@ -135,6 +136,11 @@ func buildAPIServer(o apiOptions) *server.Server {
 		// The app-side archive of scheduled runs and task results.
 		Inbox: func(profileName string) *inbox.Store {
 			return inbox.NewStore(profile.DataDir(profileName))
+		},
+		// The proactive clock, read-only — the app's home screen shows what
+		// runs and when.
+		Schedules: func() ([]schedule.Task, error) {
+			return schedule.NewStore(profile.ScheduleDir()).Load()
 		},
 		// 👎 corrections become durable lessons — the same loop the Telegram
 		// feedback buttons ran, now first-class over HTTP.
