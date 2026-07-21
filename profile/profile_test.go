@@ -71,21 +71,21 @@ func TestIdentityProfilesRegistered(t *testing.T) {
 func TestScopedDirsAreUnderProfile(t *testing.T) {
 	// Each identity's stores live under its own data dir, so accounts/tools are
 	// isolated between identities (personal vs business).
-	base := DataDir("basecode")
+	base := DataDir("business")
 	for name, got := range map[string]string{
-		"auth":      AuthFile("basecode"),
-		"memory":    MemoryDir("basecode"),
-		"skills":    SkillsDir("basecode"),
-		"sessions":  SessionsDir("basecode"),
-		"mcp":       MCPFile("basecode"),
-		"workspace": WorkspaceDir("basecode"),
+		"auth":      AuthFile("business"),
+		"memory":    MemoryDir("business"),
+		"skills":    SkillsDir("business"),
+		"sessions":  SessionsDir("business"),
+		"mcp":       MCPFile("business"),
+		"workspace": WorkspaceDir("business"),
 	} {
 		if !strings.HasPrefix(got, base) {
 			t.Errorf("%s dir %q not under profile data dir %q", name, got, base)
 		}
 	}
 	// Different identities never share a data dir.
-	if DataDir("basecode") == DataDir("personal") {
+	if DataDir("business") == DataDir("personal") {
 		t.Error("distinct profiles must have distinct data dirs")
 	}
 }

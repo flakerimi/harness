@@ -9,7 +9,7 @@ func TestSlug(t *testing.T) {
 	cases := map[string]string{
 		"Acme ISP":          "acme-isp",
 		"  Bright/Social  ": "bright-social",
-		"Basecode":          "basecode",
+		"Globex":            "globex",
 		"A & B, Inc.":       "a-b-inc",
 		"!!!":               "",
 		"Café 42":           "caf-42",

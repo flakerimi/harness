@@ -43,7 +43,7 @@ func newTestServer(t *testing.T) *Server {
 		},
 		Sessions: func(_ string) *session.Store { return session.NewStore(dir) },
 		Profiles: func() []ProfileInfo {
-			return []ProfileInfo{{Name: "personal", Description: "you"}, {Name: "basecode", Description: "work"}}
+			return []ProfileInfo{{Name: "personal", Description: "you"}, {Name: "business", Description: "work"}}
 		},
 		DefaultProfile: "personal",
 	}
@@ -65,7 +65,7 @@ func TestTokenAuth(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/profiles", nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	srv.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "basecode") {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "business") {
 		t.Errorf("bearer auth = %d %q", rec.Code, rec.Body.String())
 	}
 

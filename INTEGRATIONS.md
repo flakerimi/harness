@@ -75,7 +75,7 @@ webhook, not a channel — until you need two-way chat, and then it's a channel.
 ### Infra / money
 | Integration | Route | Notes |
 |---|---|---|
-| Porkbun / Hetzner / Basepod | exec plugins | thin API/CLI wrappers; per-identity so only the ops profile has them |
+| DNS / cloud / hosting APIs | exec plugins | thin API/CLI wrappers; per-identity so only the ops profile has them |
 | Stripe / Polar | MCP (official) or plugin | read-only reporting first; anything that moves money must be `writes: true` so the gate covers it |
 | Home Assistant | MCP or plugin | HA has an MCP server; lights/sensors as tools |
 

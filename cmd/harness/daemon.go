@@ -122,7 +122,7 @@ func printLaunchdPlist() {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>al.basecode.harness</string>
+  <key>Label</key><string>harness.daemon</string>
   <key>ProgramArguments</key>
   <array>
     <string>%s</string>
@@ -140,6 +140,6 @@ func printLaunchdPlist() {
 </dict>
 </plist>
 `, bin)
-	fmt.Fprintln(os.Stderr, "\n# save to ~/Library/LaunchAgents/al.basecode.harness.plist, then:")
-	fmt.Fprintln(os.Stderr, "#   launchctl load -w ~/Library/LaunchAgents/al.basecode.harness.plist")
+	fmt.Fprintln(os.Stderr, "\n# save to ~/Library/LaunchAgents/harness.daemon.plist, then:")
+	fmt.Fprintln(os.Stderr, "#   launchctl load -w ~/Library/LaunchAgents/harness.daemon.plist")
 }

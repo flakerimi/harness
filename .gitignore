@@ -27,3 +27,4 @@ harness.json
 # Stray bp init artifacts (local only)
 Dockerfile
 basepod.yaml
+*.p8
