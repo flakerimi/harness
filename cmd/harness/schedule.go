@@ -1,24 +1,15 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/flakerimi/harness/app"
-	"github.com/flakerimi/harness/channel/apns"
-	"github.com/flakerimi/harness/channel/telegram"
-	"github.com/flakerimi/harness/connector/plugin"
-	"github.com/flakerimi/harness/inbox"
 	"github.com/flakerimi/harness/profile"
 	"github.com/flakerimi/harness/schedule"
 )
@@ -299,124 +290,14 @@ func (h *captureHandler) OnText(delta string) {
 	h.text.WriteString(delta)
 }
 
+// deliverers is the shared channel registry — telegram, webhook, push, app,
+// with exec plugins as the fallback. One instance serves every cmd surface
+// (scheduler, task worker, reflect).
+var deliverers = app.Deliverers()
+
 // deliver sends a scheduled/background task's output to one or more channel
 // targets — "kind:dest" forms like "telegram:<chatID>", "push:<profile>",
-// "webhook:<url>", or any kind a plugin advertises — separated by "|"
-// ("telegram:123|push:personal" reaches both). Empty text is a no-op; with
-// multiple targets each is attempted and the first error is reported.
+// "webhook:<url>", or any kind a plugin advertises — separated by "|".
 func deliver(ctx context.Context, target, text string) error {
-	if strings.TrimSpace(text) == "" {
-		return nil
-	}
-	if targets := strings.Split(target, "|"); len(targets) > 1 {
-		var firstErr error
-		for _, t := range targets {
-			if t = strings.TrimSpace(t); t == "" {
-				continue
-			}
-			if err := deliver(ctx, t, text); err != nil && firstErr == nil {
-				firstErr = err
-			}
-		}
-		return firstErr
-	}
-	kind, dest, ok := strings.Cut(target, ":")
-	if !ok || dest == "" {
-		return fmt.Errorf("bad deliver target %q (want kind:dest, e.g. telegram:12345)", target)
-	}
-	switch kind {
-	case "telegram":
-		tok := os.Getenv("TELEGRAM_BOT_TOKEN")
-		if tok == "" {
-			return fmt.Errorf("telegram delivery needs $TELEGRAM_BOT_TOKEN")
-		}
-		chatID, err := strconv.ParseInt(dest, 10, 64)
-		if err != nil {
-			return fmt.Errorf("telegram chat id %q: %w", dest, err)
-		}
-		return telegram.New(tok).Send(ctx, chatID, text)
-	case "webhook":
-		return deliverWebhook(ctx, dest, text)
-	case "push", "apns":
-		// dest is the identity whose registered devices get the alert.
-		return deliverPush(ctx, dest, text)
-	case "app":
-		// The identity's own app: persist to its inbox (the durable record),
-		// then announce with a push banner. The banner is best-effort — the
-		// delivery already succeeded once it's in the feed.
-		if _, err := inbox.NewStore(profile.DataDir(dest)).Add(text); err != nil {
-			return fmt.Errorf("app inbox: %w", err)
-		}
-		if err := deliverPush(ctx, dest, text); err != nil {
-			fmt.Fprintf(os.Stderr, "deliver: app:%s stored, push banner failed: %v\n", dest, err)
-		}
-		return nil
-	default:
-		// A plugin can extend deliver kinds: any discovered executable whose
-		// manifest advertises this kind handles the target.
-		plugs, _ := plugin.Discover(ctx, app.PluginDirs("")...)
-		if p, ok := plugin.FindDeliverer(plugs, kind); ok {
-			return p.Deliver(ctx, kind, dest, text)
-		}
-		return fmt.Errorf("unknown deliver kind %q (built-in: telegram, webhook, push, app; no plugin advertises it)", kind)
-	}
-}
-
-// deliverPush alerts every device registered for an identity. Dead tokens
-// (wiped phone, reinstalled app) are pruned rather than failing the delivery;
-// the remaining devices still get the alert.
-func deliverPush(ctx context.Context, profileName, text string) error {
-	client, err := apns.FromEnv()
-	if err != nil {
-		return err
-	}
-	if client == nil {
-		return fmt.Errorf("push delivery needs APNS_KEY_B64/APNS_KEY_FILE + APNS_KEY_ID + APNS_TEAM_ID + APNS_TOPIC")
-	}
-	store := apns.NewTokenStore(profile.DataDir(profileName))
-	tokens := store.List()
-	if len(tokens) == 0 {
-		return fmt.Errorf("push: no devices registered for %q", profileName)
-	}
-	var firstErr error
-	for _, t := range tokens {
-		err := client.Push(ctx, t.Token, "", text)
-		if err == nil {
-			continue
-		}
-		if strings.Contains(err.Error(), "Unregistered") || strings.Contains(err.Error(), "BadDeviceToken") {
-			_ = store.Remove(t.Token)
-			continue
-		}
-		if firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
-}
-
-// deliverWebhook POSTs the text to an incoming-webhook URL as JSON. The payload
-// carries both "text" (Slack, Mattermost, Teams) and "content" (Discord) keys —
-// each service reads its own and ignores the other, so one kind covers them all.
-func deliverWebhook(ctx context.Context, url, text string) error {
-	payload, err := json.Marshal(map[string]string{"text": text, "content": text})
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 20 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
-		return fmt.Errorf("webhook %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	}
-	return nil
+	return deliverers.Deliver(ctx, target, text)
 }

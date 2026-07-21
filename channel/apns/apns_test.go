@@ -32,7 +32,7 @@ func testKeyPEM(t *testing.T) ([]byte, *ecdsa.PrivateKey) {
 
 func TestProviderTokenIsValidES256(t *testing.T) {
 	pemKey, key := testKeyPEM(t)
-	c, err := New(Config{Key: pemKey, KeyID: "KEY123", TeamID: "TEAM456", Topic: "al.basecode.harnessApp"})
+	c, err := New(Config{Key: pemKey, KeyID: "KEY123", TeamID: "TEAM456", Topic: "com.example.harnessApp"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,14 +87,14 @@ func TestPushSendsAlertAndSurfacesReason(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := New(Config{Key: pemKey, KeyID: "K", TeamID: "T", Topic: "al.basecode.harnessApp", Host: srv.URL})
+	c, err := New(Config{Key: pemKey, KeyID: "K", TeamID: "T", Topic: "com.example.harnessApp", Host: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Push(context.Background(), "devtok123", "", "Inbox: 2 things need you"); err != nil {
 		t.Fatal(err)
 	}
-	if gotPath != "/3/device/devtok123" || gotTopic != "al.basecode.harnessApp" {
+	if gotPath != "/3/device/devtok123" || gotTopic != "com.example.harnessApp" {
 		t.Errorf("path=%q topic=%q", gotPath, gotTopic)
 	}
 	if !strings.HasPrefix(gotAuth, "bearer ") {
