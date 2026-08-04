@@ -10,7 +10,7 @@ import (
 )
 
 func TestManualAuthURLUsesHostedCallback(t *testing.T) {
-	authURL, verifier, err := AnthropicManualAuthURL()
+	authURL, verifier, state, err := AnthropicManualAuthURL()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,8 +25,11 @@ func TestManualAuthURLUsesHostedCallback(t *testing.T) {
 	if q.Get("code") != "true" || q.Get("code_challenge_method") != "S256" {
 		t.Errorf("missing manual-code params: %v", q)
 	}
-	if q.Get("state") != verifier {
-		t.Error("state must carry the verifier")
+	if q.Get("state") != state {
+		t.Error("URL state must match the returned state")
+	}
+	if state == verifier {
+		t.Error("state must NOT be the PKCE verifier — it travels through the browser")
 	}
 }
 
@@ -43,15 +46,15 @@ func TestExchangeManualCodeSplitsFragment(t *testing.T) {
 	anthropicTokenURL = ts.URL
 	defer func() { anthropicTokenURL = old }()
 
-	creds, err := ExchangeManualCode(context.Background(), "thecode#thestate", "verif")
+	creds, err := ExchangeManualCode(context.Background(), "thecode#thestate", "verif", "st-independent")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got["code"] != "thecode" {
 		t.Errorf("posted code = %q, fragment must be stripped", got["code"])
 	}
-	if got["state"] != "verif" || got["code_verifier"] != "verif" {
-		t.Errorf("state/code_verifier = %q/%q, want the verifier", got["state"], got["code_verifier"])
+	if got["state"] != "st-independent" || got["code_verifier"] != "verif" {
+		t.Errorf("state/code_verifier = %q/%q", got["state"], got["code_verifier"])
 	}
 	if got["redirect_uri"] != manualRedirectURI {
 		t.Errorf("redirect_uri = %q, want hosted code page", got["redirect_uri"])

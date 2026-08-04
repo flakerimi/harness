@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -20,9 +21,10 @@ var (
 // turnState is one session's turn machinery. The journal outlives the turn so
 // late resumers can still replay the tail; it resets when the next turn starts.
 type turnState struct {
-	journal *journal
-	subs    map[chan frame]struct{}
-	running bool
+	journal  *journal
+	subs     map[chan frame]struct{}
+	running  bool
+	finished time.Time // when the last turn ended; drives idle eviction
 }
 
 // turnManager runs agent turns detached from any HTTP connection — the fix for
@@ -56,20 +58,26 @@ func (m *turnManager) state(key string) *turnState {
 
 // Start launches run on a fresh goroutine bound to a background context. The
 // handler it receives journals every event and fans it out to subscribers.
-func (m *turnManager) Start(key string, run func(ctx context.Context, h agent.Handler)) error {
+// The returned seq is the journal cursor at turn start — stream from there so
+// a fresh POST never replays (or resets over) the previous turn's frames.
+func (m *turnManager) Start(key string, run func(ctx context.Context, h agent.Handler)) (uint64, error) {
 	m.mu.Lock()
 	st := m.state(key)
 	if st.running {
 		m.mu.Unlock()
-		return errTurnBusy
+		return 0, errTurnBusy
 	}
 	if m.active >= m.max {
 		m.mu.Unlock()
-		return errTurnCapacity
+		return 0, errTurnCapacity
 	}
 	st.running = true
 	st.journal.Reset()
+	st.journal.mu.Lock()
+	startSeq := st.journal.seq
+	st.journal.mu.Unlock()
 	m.active++
+	m.evictIdleLocked()
 	m.mu.Unlock()
 
 	h := &journalHandler{m: m, key: key}
@@ -79,6 +87,7 @@ func (m *turnManager) Start(key string, run func(ctx context.Context, h agent.Ha
 		defer func() {
 			m.mu.Lock()
 			st.running = false
+			st.finished = time.Now()
 			m.active--
 			for ch := range st.subs {
 				close(ch)
@@ -86,18 +95,44 @@ func (m *turnManager) Start(key string, run func(ctx context.Context, h agent.Ha
 			}
 			m.mu.Unlock()
 		}()
+		// A panic in provider streaming or a tool must not take down the
+		// daemon: the old per-connection handler had net/http's recovery,
+		// a detached goroutine has only this one.
+		defer func() {
+			if r := recover(); r != nil {
+				m.emit(key, "error", map[string]any{"error": fmt.Sprintf("turn panicked: %v", r)})
+				m.emit(key, "done", map[string]any{"turns": 0})
+			}
+		}()
 		run(ctx, h)
 	}()
-	return nil
+	return startSeq, nil
+}
+
+// evictIdleLocked drops long-finished turn states so probing many session ids
+// can't grow the map forever. Callers hold m.mu.
+func (m *turnManager) evictIdleLocked() {
+	if len(m.turns) <= 64 {
+		return
+	}
+	for k, st := range m.turns {
+		if !st.running && !st.finished.IsZero() && time.Since(st.finished) > 30*time.Minute {
+			delete(m.turns, k)
+		}
+	}
 }
 
 // Subscribe attaches to a session's turn: replay first (frames > after), then
 // read live until closed. live is nil when no turn is running — the replay
-// still carries a finished turn's tail, ending with its done frame.
+// still carries a finished turn's tail, ending with its done frame. Unknown
+// keys allocate nothing: a stream probe must not grow the map.
 func (m *turnManager) Subscribe(key string, after uint64) (replay []frame, evicted bool, live <-chan frame, cancel func(), running bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	st := m.state(key)
+	st, ok := m.turns[key]
+	if !ok {
+		return nil, false, nil, func() {}, false
+	}
 	replay, evicted = st.journal.Since(after)
 	if !st.running {
 		return replay, evicted, nil, func() {}, false

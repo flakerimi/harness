@@ -145,3 +145,25 @@ func TestStreamResumeAfter(t *testing.T) {
 		t.Errorf("resume must end with the done frame:\n%s", out)
 	}
 }
+
+// A session's SECOND turn must stream cleanly from its own first frame — no
+// reset frame, no replay of the previous turn (the seq cursor keeps rising
+// across journal resets, which once tricked Since(0) into reporting eviction).
+func TestSecondPostHasCleanPrefix(t *testing.T) {
+	srv := newTestServer(t)
+	for _, msg := range []string{"first", "second"} {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/chat",
+			strings.NewReader(`{"session":"sp","message":"`+msg+`"}`)))
+		out := rec.Body.String()
+		if strings.Contains(out, "event: reset") {
+			t.Fatalf("POST %q carried a spurious reset:\n%s", msg, out)
+		}
+		if strings.Index(out, "event: ready") > strings.Index(out, "event: text") {
+			t.Fatalf("POST %q replayed old frames before ready:\n%s", msg, out)
+		}
+		if !strings.Contains(out, "event: done") {
+			t.Fatalf("POST %q missing done:\n%s", msg, out)
+		}
+	}
+}

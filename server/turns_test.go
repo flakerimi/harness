@@ -11,7 +11,7 @@ import (
 func TestTurnSurvivesSubscriberLoss(t *testing.T) {
 	m := newTurnManager(4, time.Minute)
 	release := make(chan struct{})
-	err := m.Start("p/s", func(ctx context.Context, h agent.Handler) {
+	_, err := m.Start("p/s", func(ctx context.Context, h agent.Handler) {
 		h.OnText("one")
 		<-release
 		h.OnText("two")
@@ -41,8 +41,8 @@ func TestTurnSurvivesSubscriberLoss(t *testing.T) {
 func TestSecondStartIsBusy(t *testing.T) {
 	m := newTurnManager(4, time.Minute)
 	release := make(chan struct{})
-	_ = m.Start("p/s", func(ctx context.Context, h agent.Handler) { <-release })
-	if err := m.Start("p/s", func(ctx context.Context, h agent.Handler) {}); err != errTurnBusy {
+	_, _ = m.Start("p/s", func(ctx context.Context, h agent.Handler) { <-release })
+	if _, err := m.Start("p/s", func(ctx context.Context, h agent.Handler) {}); err != errTurnBusy {
 		t.Fatalf("err = %v, want errTurnBusy", err)
 	}
 	close(release)
@@ -52,8 +52,8 @@ func TestSecondStartIsBusy(t *testing.T) {
 func TestConcurrencyCap(t *testing.T) {
 	m := newTurnManager(1, time.Minute)
 	release := make(chan struct{})
-	_ = m.Start("p/a", func(ctx context.Context, h agent.Handler) { <-release })
-	if err := m.Start("p/b", func(ctx context.Context, h agent.Handler) {}); err != errTurnCapacity {
+	_, _ = m.Start("p/a", func(ctx context.Context, h agent.Handler) { <-release })
+	if _, err := m.Start("p/b", func(ctx context.Context, h agent.Handler) {}); err != errTurnCapacity {
 		t.Fatalf("err = %v, want errTurnCapacity", err)
 	}
 	close(release)
@@ -63,7 +63,7 @@ func TestConcurrencyCap(t *testing.T) {
 func TestLiveSubscriberSeesFrames(t *testing.T) {
 	m := newTurnManager(4, time.Minute)
 	release := make(chan struct{})
-	_ = m.Start("p/s", func(ctx context.Context, h agent.Handler) {
+	_, _ = m.Start("p/s", func(ctx context.Context, h agent.Handler) {
 		<-release
 		h.OnText("hello")
 		h.OnStop("end")

@@ -16,7 +16,9 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -133,8 +135,8 @@ func (s *Server) turns() *turnManager {
 			timeout = 10 * time.Minute
 		}
 		max := s.MaxTurns
-		if max == 0 {
-			max = 4
+		if max <= 0 {
+			max = 4 // zero AND negative mean "default", never "reject all"
 		}
 		s.turnMgr = newTurnManager(max, timeout)
 	})
@@ -465,6 +467,11 @@ func (c chatRequest) content() ([]provider.Block, error) {
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	var req chatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": fmt.Sprintf("body exceeds the %d MB limit", tooBig.Limit>>20)})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 		return
 	}
@@ -500,22 +507,26 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		sess.Model = req.Model
 	}
 
-	// The agent is built outside the request's cancellation (a backgrounded
-	// phone must not kill the turn — the original bug) but before Start, so a
-	// bad provider still answers 400 instead of a buried SSE error frame.
-	ag, err := s.Factory(context.WithoutCancel(r.Context()), prof, sess.Provider, sess.Model)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-
 	key := prof + "/" + sessID
-	err = s.turns().Start(key, func(ctx context.Context, h agent.Handler) {
+	startSeq, err := s.turns().Start(key, func(ctx context.Context, h agent.Handler) {
 		jh := h.(*journalHandler)
+		// The agent is built INSIDE the turn on the turn's own context: its
+		// timeout-bound cancel is what reaps connector subprocesses (MCP
+		// servers spawn via exec.CommandContext) when the turn ends. A factory
+		// failure surfaces as an SSE error frame rather than an HTTP status —
+		// the turn already exists by then.
+		ag, ferr := s.Factory(ctx, prof, sess.Provider, sess.Model)
+		if ferr != nil {
+			jh.send("error", map[string]string{"error": ferr.Error()})
+			jh.send("done", map[string]any{"turns": sess.Turns()})
+			return
+		}
 		jh.send("ready", map[string]string{"profile": prof, "session": sess.ID, "provider": sess.Provider, "model": sess.Model})
 		history, runErr := ag.ContinueWith(ctx, sess.History, content, h)
 		sess.History = history
-		s.titleSession(ctx, prof, sess)
+		if runErr == nil {
+			s.titleSession(ctx, prof, sess) // never title a failed exchange
+		}
 		if serr := store.Save(sess); serr != nil {
 			jh.send("error", map[string]string{"error": "save: " + serr.Error()})
 		}
@@ -534,7 +545,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.streamFrom(w, r, flusher, key, 0)
+	s.streamFrom(w, r, flusher, key, startSeq)
 }
 
 // titleSession fills in a session's title after its first exchange. It runs in
@@ -609,7 +620,12 @@ func (s *Server) streamFrom(w http.ResponseWriter, r *http.Request, flusher http
 func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	prof := orDefault(r.URL.Query().Get("profile"), s.DefaultProfile)
 	sessID := orDefault(r.URL.Query().Get("session"), "default")
-	after, _ := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
+	cursor := r.URL.Query().Get("after")
+	if cursor == "" {
+		// EventSource auto-reconnects carry the cursor as a header instead.
+		cursor = r.Header.Get("Last-Event-ID")
+	}
+	after, _ := strconv.ParseUint(cursor, 10, 64)
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming unsupported"})
@@ -709,8 +725,10 @@ func (s *Server) guardMax(h http.HandlerFunc, maxBody int64) http.Handler {
 	})
 }
 
-// allow charges the request against its caller's bucket: the bearer token when
-// present (one budget per client credential), else the remote IP.
+// allow charges the request against its caller's bucket: the bearer token (or
+// ?token= — EventSource can't set headers) when present, else the remote host.
+// The ephemeral port must not be part of the key, or reconnecting would mint
+// fresh buckets and bypass the limit.
 func (s *Server) allow(r *http.Request) bool {
 	if s.RatePerMin < 0 {
 		return true
@@ -724,7 +742,14 @@ func (s *Server) allow(r *http.Request) bool {
 	})
 	key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if key == "" {
-		key = r.RemoteAddr
+		key = r.URL.Query().Get("token")
+	}
+	if key == "" {
+		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+			key = host
+		} else {
+			key = r.RemoteAddr
+		}
 	}
 	return s.limiter.Allow(key)
 }

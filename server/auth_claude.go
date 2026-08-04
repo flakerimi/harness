@@ -63,12 +63,12 @@ func (s *Server) handleClaudeAuthStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "auth not configured"})
 		return
 	}
-	url, verifier, err := auth.AnthropicManualAuthURL()
+	url, verifier, state, err := auth.AnthropicManualAuthURL()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	state := verifier // the verifier doubles as state, matching the CLI flow
+	// The verifier never leaves this process; the browser only sees state.
 	s.claude().put(state, verifier)
 	writeJSON(w, http.StatusOK, map[string]string{"url": url, "state": state})
 }
@@ -89,12 +89,16 @@ func (s *Server) handleClaudeAuthComplete(w http.ResponseWriter, r *http.Request
 	if i := strings.IndexByte(req.Code, '#'); i >= 0 && req.State == "" {
 		req.State = req.Code[i+1:]
 	}
+	if req.State == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "state required — paste the full code Claude shows (code#state)"})
+		return
+	}
 	verifier, ok := s.claude().take(req.State)
 	if !ok {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "login expired — start over"})
 		return
 	}
-	creds, err := auth.ExchangeManualCode(r.Context(), req.Code, verifier)
+	creds, err := auth.ExchangeManualCode(r.Context(), req.Code, verifier, req.State)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return

@@ -59,11 +59,20 @@ func AnthropicAuthURL() (authURL, verifier string, err error) {
 // AnthropicManualAuthURL builds a PKCE authorize URL whose redirect lands on
 // Anthropic's hosted code page instead of a localhost callback. The user pastes
 // the displayed code back; complete with ExchangeManualCode.
-func AnthropicManualAuthURL() (authURL, verifier string, err error) {
+//
+// Unlike the CLI's localhost flow, state here is NOT the verifier: the state
+// travels through the browser (URL, history, the pasted code#state string)
+// while the verifier must stay server-side for PKCE to mean anything.
+func AnthropicManualAuthURL() (authURL, verifier, state string, err error) {
 	verifier, challenge, err := generatePKCE()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", "", "", err
+	}
+	state = base64.RawURLEncoding.EncodeToString(buf)
 	q := url.Values{}
 	q.Set("code", "true")
 	q.Set("client_id", anthropicClientID)
@@ -72,18 +81,18 @@ func AnthropicManualAuthURL() (authURL, verifier string, err error) {
 	q.Set("scope", anthropicScopes)
 	q.Set("code_challenge", challenge)
 	q.Set("code_challenge_method", "S256")
-	q.Set("state", verifier)
-	return anthropicAuthorizeURL + "?" + q.Encode(), verifier, nil
+	q.Set("state", state)
+	return anthropicAuthorizeURL + "?" + q.Encode(), verifier, state, nil
 }
 
 // ExchangeManualCode finishes a manual (paste-code) login. The pasted string
 // may be "code#state" — the fragment is stripped; the caller has already
 // matched state to this verifier.
-func ExchangeManualCode(ctx context.Context, code, verifier string) (*Credentials, error) {
+func ExchangeManualCode(ctx context.Context, code, verifier, state string) (*Credentials, error) {
 	if i := strings.IndexByte(code, '#'); i >= 0 {
 		code = code[:i]
 	}
-	return exchangeCodeVia(ctx, code, verifier, manualRedirectURI)
+	return exchangeCodeManual(ctx, code, verifier, state)
 }
 
 // AnthropicLogin runs the full Claude OAuth login: PKCE, a local callback
@@ -129,15 +138,20 @@ func AnthropicLogin(ctx context.Context, store *Store, providerKey string, onURL
 }
 
 func exchangeCode(ctx context.Context, code, verifier string) (*Credentials, error) {
-	return exchangeCodeVia(ctx, code, verifier, redirectURI())
+	// The CLI's localhost flow uses the verifier as state, unchanged.
+	return exchangeCodeVia(ctx, code, verifier, verifier, redirectURI())
 }
 
-func exchangeCodeVia(ctx context.Context, code, verifier, redirect string) (*Credentials, error) {
+func exchangeCodeManual(ctx context.Context, code, verifier, state string) (*Credentials, error) {
+	return exchangeCodeVia(ctx, code, verifier, state, manualRedirectURI)
+}
+
+func exchangeCodeVia(ctx context.Context, code, verifier, state, redirect string) (*Credentials, error) {
 	body, _ := json.Marshal(map[string]string{
 		"grant_type":    "authorization_code",
 		"client_id":     anthropicClientID,
 		"code":          code,
-		"state":         verifier,
+		"state":         state,
 		"redirect_uri":  redirect,
 		"code_verifier": verifier,
 	})
