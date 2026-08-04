@@ -24,6 +24,7 @@ type Session struct {
 	ID       string             `json:"id"`
 	Provider string             `json:"provider,omitempty"`
 	Model    string             `json:"model,omitempty"`
+	Title    string             `json:"title,omitempty"` // generated once after the first exchange
 	History  []provider.Message `json:"history"`
 }
 
@@ -147,10 +148,16 @@ func (s *Store) List() ([]Meta, error) {
 		if fi, err := os.Stat(p); err == nil {
 			updated = fi.ModTime()
 		}
+		// A generated title reads better than the raw opening message; fall
+		// back to the opening message until one exists.
+		title := sess.Title
+		if title == "" {
+			title = firstUserText(sess.History)
+		}
 		out = append(out, Meta{
 			ID:      id,
 			Turns:   sess.Turns(),
-			Title:   clipText(firstUserText(sess.History), 60),
+			Title:   clipText(title, 60),
 			Preview: clipText(lastText(sess.History), 90),
 			Updated: updated,
 		})

@@ -103,3 +103,20 @@ func TestSanitizeID(t *testing.T) {
 		}
 	}
 }
+
+func TestListPrefersStoredTitle(t *testing.T) {
+	st := NewStore(t.TempDir())
+	sess, _ := st.Load("titled")
+	sess.Title = "Fix the boiler"
+	sess.History = []provider.Message{{Role: "user", Content: []provider.Block{{Type: provider.BlockText, Text: "my boiler is broken and leaks"}}}}
+	if err := st.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+	metas, err := st.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 1 || metas[0].Title != "Fix the boiler" {
+		t.Fatalf("metas = %+v, want stored title preferred", metas)
+	}
+}

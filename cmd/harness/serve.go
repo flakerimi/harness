@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/flakerimi/harness/agent"
@@ -20,10 +21,12 @@ import (
 	"github.com/flakerimi/harness/inbox"
 	"github.com/flakerimi/harness/memory"
 	"github.com/flakerimi/harness/profile"
+	"github.com/flakerimi/harness/provider"
 	"github.com/flakerimi/harness/schedule"
 	"github.com/flakerimi/harness/server"
 	"github.com/flakerimi/harness/session"
 	"github.com/flakerimi/harness/task"
+	"github.com/flakerimi/harness/tool"
 )
 
 // runServe starts the HTTP+SSE server, so the same engine that powers the CLI
@@ -111,6 +114,26 @@ func buildAPIServer(o apiOptions) *server.Server {
 		},
 		Sessions: func(profileName string) *session.Store {
 			return session.NewStore(profile.SessionsDir(profileName))
+		},
+		// One-shot session titles on the fast tier: no routing, no tools, one
+		// round trip — a sidebar label is not worth a reasoning-tier call.
+		Titler: func(ctx context.Context, profileName, transcript string) (string, error) {
+			ag, err := app.Build(ctx, app.Spec{
+				Provider: o.Provider,
+				Model:    o.Model,
+				System:   "You label conversations for a sidebar.",
+				Profile:  profileName,
+				Tier:     "fast",
+				MaxTurns: 1,
+			})
+			if err != nil {
+				return "", err
+			}
+			prompt := "Title this conversation in at most 6 plain words. Reply with the title only, no quotes, no punctuation at the end.\n\n" + transcript
+			var b strings.Builder
+			_, err = ag.ContinueWith(ctx, nil,
+				[]provider.Block{{Type: provider.BlockText, Text: prompt}}, titleCollector{&b})
+			return b.String(), err
 		},
 		Profiles: profileInfos,
 		// Device-token registration for push delivery (`push:<profile>`); the
@@ -240,3 +263,13 @@ func resolveAPIToken(flagTok string, open bool) string {
 	fmt.Fprintf(os.Stderr, "generated API token (saved to %s):\n  %s\n", path, tok)
 	return tok
 }
+
+// titleCollector is the minimal agent.Handler: it keeps the text and drops
+// everything else — all a title generation needs.
+type titleCollector struct{ b *strings.Builder }
+
+func (t titleCollector) OnText(delta string)              { t.b.WriteString(delta) }
+func (t titleCollector) OnToolStart(string, string)       {}
+func (t titleCollector) OnToolResult(string, tool.Result) {}
+func (t titleCollector) OnUsage(provider.Usage)           {}
+func (t titleCollector) OnStop(string)                    {}

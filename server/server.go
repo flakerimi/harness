@@ -108,6 +108,12 @@ type Server struct {
 	// anonymous). Zero means the default 60; negative disables limiting.
 	RatePerMin int
 
+	// Titler, when set, names a session after its first exchange (≤6 words) —
+	// the Claude-app sidebar convention. It runs inside the turn goroutine
+	// right before the save (single writer, no racing re-save) with a short
+	// timeout; failures just leave the fallback first-message title.
+	Titler func(ctx context.Context, profile, transcript string) (string, error)
+
 	turnsOnce sync.Once
 	turnMgr   *turnManager
 
@@ -509,6 +515,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		jh.send("ready", map[string]string{"profile": prof, "session": sess.ID, "provider": sess.Provider, "model": sess.Model})
 		history, runErr := ag.ContinueWith(ctx, sess.History, content, h)
 		sess.History = history
+		s.titleSession(ctx, prof, sess)
 		if serr := store.Save(sess); serr != nil {
 			jh.send("error", map[string]string{"error": "save: " + serr.Error()})
 		}
@@ -528,6 +535,28 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.streamFrom(w, r, flusher, key, 0)
+}
+
+// titleSession fills in a session's title after its first exchange. It runs in
+// the turn goroutine before the save so there is exactly one writer; a slow or
+// failing Titler costs at most the timeout and leaves the fallback title.
+func (s *Server) titleSession(ctx context.Context, prof string, sess *session.Session) {
+	if s.Titler == nil || sess.Title != "" || sess.Turns() != 1 {
+		return
+	}
+	transcript := session.Transcript(sess.History)
+	if len(transcript) > 2000 {
+		transcript = transcript[:2000]
+	}
+	tctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	title, err := s.Titler(tctx, prof, transcript)
+	if err != nil {
+		return
+	}
+	if title = strings.TrimSpace(strings.Trim(strings.TrimSpace(title), `"`)); title != "" {
+		sess.Title = title
+	}
 }
 
 // streamFrom subscribes to a session's turn and writes SSE until the turn ends
