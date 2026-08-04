@@ -19,7 +19,9 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/flakerimi/harness/agent"
@@ -29,7 +31,6 @@ import (
 	"github.com/flakerimi/harness/schedule"
 	"github.com/flakerimi/harness/session"
 	"github.com/flakerimi/harness/task"
-	"github.com/flakerimi/harness/tool"
 )
 
 // ProfileInfo is one identity advertised to clients.
@@ -95,6 +96,33 @@ type Server struct {
 	// Schedules, when set, enables GET /v1/schedules — the identity's proactive
 	// clock, read-only, so a client's home screen can show what runs and when.
 	Schedules func() ([]schedule.Task, error)
+
+	// TurnTimeout bounds a detached turn's lifetime (default 10 minutes) and
+	// MaxTurns caps how many run at once across all sessions (default 4). Turns
+	// outlive their HTTP connections — a phone backgrounding mid-reply must not
+	// kill the run — so these are the only things that stop one.
+	TurnTimeout time.Duration
+	MaxTurns    int
+
+	turnsOnce sync.Once
+	turnMgr   *turnManager
+}
+
+// turns lazily builds the manager so a zero-value Server keeps working in
+// tests and embedders that never touch chat.
+func (s *Server) turns() *turnManager {
+	s.turnsOnce.Do(func() {
+		timeout := s.TurnTimeout
+		if timeout == 0 {
+			timeout = 10 * time.Minute
+		}
+		max := s.MaxTurns
+		if max == 0 {
+			max = 4
+		}
+		s.turnMgr = newTurnManager(max, timeout)
+	})
+	return s.turnMgr
 }
 
 func (s *Server) handleSchedules(w http.ResponseWriter, _ *http.Request) {
@@ -251,6 +279,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.Handle("POST /v1/chat", s.guard(s.handleChat))
+	mux.Handle("GET /v1/chat/stream", s.guard(s.handleChatStream))
 	mux.Handle("GET /v1/profiles", s.guard(s.handleProfiles))
 	mux.Handle("GET /v1/models", s.guard(s.handleModels))
 	mux.Handle("GET /v1/sessions", s.guard(s.handleSessions))
@@ -320,7 +349,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"service":   "harness",
 		"auth":      s.Token != "",
-		"endpoints": []string{"POST /v1/chat", "GET /v1/profiles", "GET /v1/models", "GET /v1/sessions", "GET /v1/sessions/{id}", "GET /v1/tasks", "POST /v1/tasks", "GET /v1/tasks/{id}", "GET /healthz"},
+		"endpoints": []string{"POST /v1/chat", "GET /v1/chat/stream", "GET /v1/profiles", "GET /v1/models", "GET /v1/sessions", "GET /v1/sessions/{id}", "GET /v1/tasks", "POST /v1/tasks", "GET /v1/tasks/{id}", "GET /healthz"},
 	})
 }
 
@@ -453,29 +482,99 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		sess.Model = req.Model
 	}
 
-	ag, err := s.Factory(r.Context(), prof, sess.Provider, sess.Model)
+	// The agent is built outside the request's cancellation (a backgrounded
+	// phone must not kill the turn — the original bug) but before Start, so a
+	// bad provider still answers 400 instead of a buried SSE error frame.
+	ag, err := s.Factory(context.WithoutCancel(r.Context()), prof, sess.Provider, sess.Model)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
+	key := prof + "/" + sessID
+	err = s.turns().Start(key, func(ctx context.Context, h agent.Handler) {
+		jh := h.(*journalHandler)
+		jh.send("ready", map[string]string{"profile": prof, "session": sess.ID, "provider": sess.Provider, "model": sess.Model})
+		history, runErr := ag.ContinueWith(ctx, sess.History, content, h)
+		sess.History = history
+		if serr := store.Save(sess); serr != nil {
+			jh.send("error", map[string]string{"error": "save: " + serr.Error()})
+		}
+		if runErr != nil {
+			jh.send("error", map[string]string{"error": runErr.Error()})
+		}
+		jh.send("done", map[string]any{"turns": sess.Turns()})
+	})
+	switch err {
+	case errTurnBusy:
+		latest, _ := s.turns().Running(key)
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "turn in progress", "seq": latest})
+		return
+	case errTurnCapacity:
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+		return
+	}
+
+	s.streamFrom(w, r, flusher, key, 0)
+}
+
+// streamFrom subscribes to a session's turn and writes SSE until the turn ends
+// or the client goes away. A client disconnect never cancels the turn — the
+// client re-attaches later via GET /v1/chat/stream with its last seen id.
+func (s *Server) streamFrom(w http.ResponseWriter, r *http.Request, flusher http.Flusher, key string, after uint64) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	h := &sseHandler{w: w, flusher: flusher}
-	h.send("ready", map[string]string{"profile": prof, "session": sess.ID, "provider": sess.Provider, "model": sess.Model})
+	replay, evicted, live, cancel, _ := s.turns().Subscribe(key, after)
+	defer cancel()
+	writeFrame := func(f frame) {
+		fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", f.Seq, f.Event, f.Data)
+	}
+	if evicted {
+		// The resume cursor predates the journal window: tell the client to
+		// refetch session history before trusting the replay.
+		fmt.Fprint(w, "event: reset\ndata: {}\n\n")
+	}
+	for _, f := range replay {
+		writeFrame(f)
+	}
+	flusher.Flush()
+	if live == nil {
+		return
+	}
+	ping := time.NewTicker(20 * time.Second)
+	defer ping.Stop()
+	for {
+		select {
+		case f, ok := <-live:
+			if !ok {
+				return
+			}
+			writeFrame(f)
+			flusher.Flush()
+		case <-ping.C:
+			fmt.Fprint(w, ": ping\n\n")
+			flusher.Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
 
-	history, runErr := ag.ContinueWith(r.Context(), sess.History, content, h)
-	sess.History = history
-	if serr := store.Save(sess); serr != nil {
-		h.send("error", map[string]string{"error": "save: " + serr.Error()})
+// handleChatStream re-attaches a client to a session's turn: journal replay
+// after the given cursor, then live frames until the turn ends.
+func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
+	prof := orDefault(r.URL.Query().Get("profile"), s.DefaultProfile)
+	sessID := orDefault(r.URL.Query().Get("session"), "default")
+	after, _ := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming unsupported"})
+		return
 	}
-	if runErr != nil {
-		h.send("error", map[string]string{"error": runErr.Error()})
-	}
-	h.send("done", map[string]any{"turns": sess.Turns()})
+	s.streamFrom(w, r, flusher, prof+"/"+sessID, after)
 }
 
 func (s *Server) handleProfiles(w http.ResponseWriter, _ *http.Request) {
@@ -588,35 +687,6 @@ func cors(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-// sseHandler implements agent.Handler (and RouteAware), writing each event as an
-// SSE frame and flushing so the client streams in real time.
-type sseHandler struct {
-	w       http.ResponseWriter
-	flusher http.Flusher
-}
-
-func (h *sseHandler) send(event string, data any) {
-	payload, err := json.Marshal(data)
-	if err != nil {
-		return
-	}
-	fmt.Fprintf(h.w, "event: %s\ndata: %s\n\n", event, payload)
-	h.flusher.Flush()
-}
-
-func (h *sseHandler) OnText(delta string) { h.send("text", map[string]string{"delta": delta}) }
-func (h *sseHandler) OnToolStart(name, id string) {
-	h.send("tool_start", map[string]string{"name": name, "id": id})
-}
-func (h *sseHandler) OnToolResult(name string, res tool.Result) {
-	h.send("tool_result", map[string]any{"name": name, "content": res.Content, "is_error": res.IsError})
-}
-func (h *sseHandler) OnUsage(u provider.Usage) { h.send("usage", u) }
-func (h *sseHandler) OnStop(reason string)     { h.send("stop", map[string]string{"reason": reason}) }
-func (h *sseHandler) OnRoute(tier, model string) {
-	h.send("route", map[string]string{"tier": tier, "model": model})
 }
 
 func orDefault(v, def string) string {
