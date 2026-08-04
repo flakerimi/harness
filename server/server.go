@@ -104,8 +104,15 @@ type Server struct {
 	TurnTimeout time.Duration
 	MaxTurns    int
 
+	// RatePerMin caps /v1 requests per bearer token (or client IP when
+	// anonymous). Zero means the default 60; negative disables limiting.
+	RatePerMin int
+
 	turnsOnce sync.Once
 	turnMgr   *turnManager
+
+	limitOnce sync.Once
+	limiter   *rateLimiter
 }
 
 // turns lazily builds the manager so a zero-value Server keeps working in
@@ -278,7 +285,7 @@ func (s *Server) Handler() http.Handler {
 		fmt.Fprintln(w, "ok")
 	})
 	mux.HandleFunc("GET /", s.handleIndex)
-	mux.Handle("POST /v1/chat", s.guard(s.handleChat))
+	mux.Handle("POST /v1/chat", s.guardMax(s.handleChat, 12<<20)) // images ride the chat body
 	mux.Handle("GET /v1/chat/stream", s.guard(s.handleChatStream))
 	mux.Handle("GET /v1/profiles", s.guard(s.handleProfiles))
 	mux.Handle("GET /v1/models", s.guard(s.handleModels))
@@ -649,14 +656,43 @@ func (s *Server) handleSessionHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 // guard enforces token auth on a handler when a token is configured.
-func (s *Server) guard(h http.HandlerFunc) http.Handler {
+func (s *Server) guard(h http.HandlerFunc) http.Handler { return s.guardMax(h, 1<<20) }
+
+// guardMax token-gates a route, rate-limits it, and caps its request body.
+// Chat takes 12 MB (images); everything else 1 MB.
+func (s *Server) guardMax(h http.HandlerFunc, maxBody int64) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.Token != "" && !s.authorized(r) {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
+		if !s.allow(r) {
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limited — slow down"})
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		h(w, r)
 	})
+}
+
+// allow charges the request against its caller's bucket: the bearer token when
+// present (one budget per client credential), else the remote IP.
+func (s *Server) allow(r *http.Request) bool {
+	if s.RatePerMin < 0 {
+		return true
+	}
+	s.limitOnce.Do(func() {
+		per := s.RatePerMin
+		if per == 0 {
+			per = 60
+		}
+		s.limiter = newRateLimiter(per)
+	})
+	key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if key == "" {
+		key = r.RemoteAddr
+	}
+	return s.limiter.Allow(key)
 }
 
 // authorized accepts the token via an Authorization: Bearer header or a ?token=

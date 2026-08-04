@@ -171,7 +171,14 @@ func buildAPIServer(o apiOptions) *server.Server {
 // serveHTTP runs an HTTP server until ctx is cancelled, then shuts it down
 // gracefully. Reusable by serve and the daemon supervisor.
 func serveHTTP(ctx context.Context, addr string, h http.Handler) error {
-	hs := &http.Server{Addr: addr, Handler: h}
+	// Header/idle timeouts guard against slow-loris and dead keep-alives; no
+	// WriteTimeout — it would cut long SSE turn streams mid-reply.
+	hs := &http.Server{
+		Addr:              addr,
+		Handler:           h,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	go func() {
 		<-ctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

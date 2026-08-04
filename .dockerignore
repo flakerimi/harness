@@ -1,0 +1,5 @@
+# Secrets and local state must never reach an image layer.
+auth.json
+.env*
+*.p8
+.git

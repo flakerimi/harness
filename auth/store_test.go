@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -43,5 +44,20 @@ func TestStoreOverwrite(t *testing.T) {
 	}
 	if got.Access != "new" {
 		t.Errorf("overwrite failed: got %q", got.Access)
+	}
+}
+
+func TestStoreSavePerms(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "auth.json")
+	st := NewStore(p)
+	if err := st.Save("claude", &Credentials{Access: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("auth file perms = %o, want 600", perm)
 	}
 }
