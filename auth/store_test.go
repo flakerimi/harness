@@ -61,3 +61,16 @@ func TestStoreSavePerms(t *testing.T) {
 		t.Fatalf("auth file perms = %o, want 600", perm)
 	}
 }
+
+// Connecting a connector under a fresh identity is often the first write to
+// that profile's dir — Save must create it, not fail with ENOENT.
+func TestStoreSaveCreatesMissingDir(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "profiles", "work", "auth.json")
+	if err := NewStore(p).Save("google", &Credentials{Access: "a", Refresh: "r"}); err != nil {
+		t.Fatalf("Save into missing dir: %v", err)
+	}
+	got, err := NewStore(p).Load("google")
+	if err != nil || got.Access != "a" {
+		t.Fatalf("reload = %+v err=%v", got, err)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -83,6 +84,12 @@ func (s *Store) read() (map[string]entry, error) {
 func (s *Store) write(data map[string]entry) error {
 	body, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
+		return err
+	}
+	// The profile's dir may not exist yet — connecting a connector is often the
+	// first thing that ever writes under a fresh identity (e.g. `work`). 0700
+	// because it holds credentials.
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
 	// Atomic-ish write: temp file + rename, restricted permissions.
