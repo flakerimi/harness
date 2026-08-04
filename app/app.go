@@ -73,7 +73,13 @@ func Build(ctx context.Context, spec Spec) (*agent.Agent, error) {
 	// so stored keys work without exporting env vars.
 	cfg, _ := config.Load()
 	pc := cfg.ProviderConf(spec.Provider)
-	prov, err := provider.BuildWith(spec.Provider, provider.BuildOptions{APIKey: pc.APIKey, BaseURL: pc.BaseURL})
+	prov, err := provider.BuildWith(spec.Provider, provider.BuildOptions{
+		APIKey:  pc.APIKey,
+		BaseURL: pc.BaseURL,
+		// The profile's own credential file — where the app's Connect Claude
+		// flow saves OAuth tokens — so a connected subscription just works.
+		AuthFile: profile.AuthFile(spec.Profile),
+	})
 	if err != nil {
 		return nil, err
 	}

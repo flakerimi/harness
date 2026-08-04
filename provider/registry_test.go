@@ -1,8 +1,11 @@
 package provider
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/flakerimi/harness/auth"
 )
 
 func TestBuildWithNewProviders(t *testing.T) {
@@ -77,5 +80,27 @@ func TestNewOpenAICompatibleProviders(t *testing.T) {
 	}
 	if DefaultModel("qwen") != "qwen-plus" || DefaultModel("zai") != "glm-4.7" {
 		t.Error("qwen/zai defaults not set")
+	}
+}
+
+// The app's Connect Claude flow saves OAuth credentials into a profile-scoped
+// auth file; BuildWith must find them there without env overrides.
+func TestBuildClaudeFromProfileAuthFile(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("HARNESS_AUTH_FILE", "")
+	f := filepath.Join(t.TempDir(), "auth.json")
+	if err := auth.NewStore(f).Save("claude", &auth.Credentials{Access: "a", Refresh: "r"}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := BuildWith("claude", BuildOptions{AuthFile: f})
+	if err != nil {
+		t.Fatalf("BuildWith with profile auth file: %v", err)
+	}
+	if p.Name() != "anthropic" {
+		t.Fatalf("provider = %q", p.Name())
+	}
+	// And without any credential source, the error mentions the connect paths.
+	if _, err := BuildWith("claude", BuildOptions{AuthFile: filepath.Join(t.TempDir(), "missing.json")}); err == nil {
+		t.Fatal("expected error with no credentials anywhere")
 	}
 }

@@ -23,6 +23,11 @@ func Build(slug string) (Provider, error) { return BuildWith(slug, BuildOptions{
 type BuildOptions struct {
 	APIKey  string
 	BaseURL string
+
+	// AuthFile is a caller-scoped OAuth credential file (a profile's own
+	// auth.json) tried before the working-directory default. $HARNESS_AUTH_FILE
+	// still wins over both when set.
+	AuthFile string
 }
 
 // BuildWith resolves a provider slug into a concrete Provider, honoring explicit
@@ -58,12 +63,29 @@ func BuildWith(slug string, opts BuildOptions) (Provider, error) {
 		if k := key("ANTHROPIC_API_KEY"); k != "" {
 			return NewAnthropic(k), nil
 		}
-		// No API key — fall back to OAuth credentials from the auth file.
-		store := auth.NewStore(envOr("HARNESS_AUTH_FILE", "auth.json"))
-		if _, err := store.Load("claude"); err != nil {
-			return nil, fmt.Errorf("provider %q: set ANTHROPIC_API_KEY, or provide OAuth credentials: %w", slug, err)
+		// No API key — fall back to OAuth credentials. Candidates in order:
+		// explicit env override, the caller's profile-scoped file (where the
+		// app's paste-code connect saves), then the CLI login's working-dir
+		// default.
+		var candidates []string
+		if v := os.Getenv("HARNESS_AUTH_FILE"); v != "" {
+			candidates = []string{v}
+		} else {
+			if opts.AuthFile != "" {
+				candidates = append(candidates, opts.AuthFile)
+			}
+			candidates = append(candidates, "auth.json")
 		}
-		return NewAnthropic("").WithOAuth(auth.NewAnthropicTokenSource(store, "claude")), nil
+		var lastErr error
+		for _, f := range candidates {
+			store := auth.NewStore(f)
+			if _, err := store.Load("claude"); err == nil {
+				return NewAnthropic("").WithOAuth(auth.NewAnthropicTokenSource(store, "claude")), nil
+			} else {
+				lastErr = err
+			}
+		}
+		return nil, fmt.Errorf("provider %q: set ANTHROPIC_API_KEY, or connect Claude (app Settings → Connect Claude, or `harness login`): %w", slug, lastErr)
 	case "openai", "chatgpt":
 		k := key("OPENAI_API_KEY")
 		if k == "" {
