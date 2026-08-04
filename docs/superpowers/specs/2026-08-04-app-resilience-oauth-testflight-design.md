@@ -45,6 +45,7 @@
 ## 2. Review + hardening
 
 - **Review pass** over both codebases (Go: races, context misuse, error swallowing, leaks; Dart: unawaited futures, setState-after-dispose, stream leaks). Findings fixed in this cycle and reported.
+- **Pending OpenAI provider fix** (uncommitted in `provider/openai.go`): tool parameter schemas gain an empty `properties` map when absent, so strict validators (LM Studio) accept them. Validate, add a regression test, commit — first task, clears the dirty tree.
 - `guard`: `subtle.ConstantTimeCompare` for the bearer token.
 - Rate limit `/v1`: token bucket per token+IP, 60 req/min (config), 429 on excess; established streams exempt.
 - `http.MaxBytesReader`: 12 MB on `/v1/chat`, 1 MB elsewhere. `ReadHeaderTimeout` 10 s, `IdleTimeout` 120 s, no `WriteTimeout` (streams).
@@ -75,8 +76,8 @@
 
 ## 5. TestFlight
 
-- `harness-app/release.sh`: bump build number (`pubspec.yaml` `version: 1.0.0+N`), `flutter build ipa --release`, upload via `xcrun altool --upload-app --type ios` with App Store Connect API key from env (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_PATH`). Fails loudly if env missing.
-- **User-provided prerequisite:** ASC API key (App Manager role) — the existing `.p8` is APNs-only and cannot upload builds. Fallback for build 1: Xcode Organizer manual upload.
+- `harness-app/release.sh`: bump build number (`pubspec.yaml` `version: 1.0.0+N`), `flutter build ipa --release --export-method app-store`, upload via `xcrun altool --upload-app --type ios` supporting **either** credential: ASC API key (`ASC_KEY_ID`/`ASC_ISSUER_ID`/`ASC_KEY_PATH` env) **or** Apple ID + app-specific password (`-u dev@basecode.al -p @keychain:AC_PASSWORD`). Fails loudly if neither is configured.
+- **User-provided prerequisite (one of):** ASC API key (App Manager role), or an app-specific password for dev@basecode.al stored in keychain as `AC_PASSWORD`. Existing keys on disk can't upload: `AuthKey_STGRH25HZB.p8` is APNs-only, `SubscriptionKey_P54FYCYGTC.p8` is IAP-only. Prior installs were ad-hoc via `devicectl` to the phone, not TestFlight.
 - Order of shipping: (1) engine changes land in `~/Harnes`, tagged release; (2) donna image rebuilt + `deploy.sh` (server live with resume + OAuth); (3) app released to TestFlight pointing at `donna.common.al`.
 - Post-upload manual steps (user): export compliance answer (uses HTTPS only → exempt), add internal tester, install via TestFlight app.
 
