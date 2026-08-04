@@ -12,11 +12,21 @@ import (
 	"time"
 )
 
-const (
-	anthropicTokenURL = "https://platform.claude.com/v1/oauth/token"
-	// Public OAuth client identifier for the Claude Pro/Max login flow.
-	anthropicClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-)
+// anthropicTokenURL is a var (not const) purely so tests can point the code
+// exchange at an httptest server — go test must never touch the network.
+var anthropicTokenURL = "https://platform.claude.com/v1/oauth/token"
+
+// TokenURLForTest swaps the Anthropic token endpoint and returns the previous
+// value. It exists only for tests in other packages (the server's OAuth
+// endpoint tests) that must never touch the network.
+func TokenURLForTest(u string) string {
+	old := anthropicTokenURL
+	anthropicTokenURL = u
+	return old
+}
+
+// Public OAuth client identifier for the Claude Pro/Max login flow.
+const anthropicClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
 // AnthropicTokenSource yields short-lived Claude OAuth access tokens, refreshing
 // from a long-lived refresh token and persisting the (rotated) credentials back

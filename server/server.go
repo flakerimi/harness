@@ -113,6 +113,9 @@ type Server struct {
 
 	limitOnce sync.Once
 	limiter   *rateLimiter
+
+	claudeOnce sync.Once
+	claudeFlow *claudeAuth
 }
 
 // turns lazily builds the manager so a zero-value Server keeps working in
@@ -295,6 +298,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/push/register", s.guard(s.handlePushRegister))
 	mux.Handle("GET /v1/connectors", s.guard(s.handleConnectors))
 	mux.Handle("POST /v1/connectors/google/connect", s.guard(s.handleGoogleConnectStart))
+	mux.Handle("POST /v1/auth/claude/start", s.guard(s.handleClaudeAuthStart))
+	mux.Handle("POST /v1/auth/claude/complete", s.guard(s.handleClaudeAuthComplete))
 	mux.Handle("GET /v1/deliveries", s.guard(s.handleDeliveries))
 	mux.Handle("POST /v1/deliveries/read", s.guard(s.handleDeliveriesRead))
 	mux.Handle("POST /v1/feedback", s.guard(s.handleFeedback))

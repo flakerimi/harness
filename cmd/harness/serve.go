@@ -130,7 +130,18 @@ func buildAPIServer(o apiOptions) *server.Server {
 					_ = cl.Close()
 				}
 			}
-			return out
+			// Claude subscription auth: connected when OAuth credentials are on
+			// file (a refresh token keeps a stale access token usable).
+			claude := server.ConnectorInfo{Name: "claude", Detail: "connect your Claude subscription"}
+			if creds, err := auth.NewStore(profile.AuthFile(profileName)).Load("claude"); err == nil {
+				if creds.Refresh != "" || time.Now().UnixMilli() < creds.Expires {
+					claude.Connected = true
+					claude.Detail = "Claude subscription connected"
+				} else {
+					claude.Detail = "session expired — reconnect"
+				}
+			}
+			return append(out, claude)
 		},
 		AuthStore: func(profileName string) *auth.Store {
 			return auth.NewStore(profile.AuthFile(profileName))

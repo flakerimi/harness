@@ -24,6 +24,12 @@ const (
 	callbackHost          = "127.0.0.1"
 	callbackPort          = 53692
 	callbackPath          = "/callback"
+
+	// manualRedirectURI is Anthropic's hosted code-display page: the browser
+	// lands there after consent and shows a code#state string for the user to
+	// paste back. It's how a login can finish when the daemon runs on a remote
+	// host where a localhost callback can never be reached.
+	manualRedirectURI = "https://platform.claude.com/oauth/code/callback"
 )
 
 func redirectURI() string {
@@ -48,6 +54,36 @@ func AnthropicAuthURL() (authURL, verifier string, err error) {
 	q.Set("code_challenge_method", "S256")
 	q.Set("state", verifier)
 	return anthropicAuthorizeURL + "?" + q.Encode(), verifier, nil
+}
+
+// AnthropicManualAuthURL builds a PKCE authorize URL whose redirect lands on
+// Anthropic's hosted code page instead of a localhost callback. The user pastes
+// the displayed code back; complete with ExchangeManualCode.
+func AnthropicManualAuthURL() (authURL, verifier string, err error) {
+	verifier, challenge, err := generatePKCE()
+	if err != nil {
+		return "", "", err
+	}
+	q := url.Values{}
+	q.Set("code", "true")
+	q.Set("client_id", anthropicClientID)
+	q.Set("response_type", "code")
+	q.Set("redirect_uri", manualRedirectURI)
+	q.Set("scope", anthropicScopes)
+	q.Set("code_challenge", challenge)
+	q.Set("code_challenge_method", "S256")
+	q.Set("state", verifier)
+	return anthropicAuthorizeURL + "?" + q.Encode(), verifier, nil
+}
+
+// ExchangeManualCode finishes a manual (paste-code) login. The pasted string
+// may be "code#state" — the fragment is stripped; the caller has already
+// matched state to this verifier.
+func ExchangeManualCode(ctx context.Context, code, verifier string) (*Credentials, error) {
+	if i := strings.IndexByte(code, '#'); i >= 0 {
+		code = code[:i]
+	}
+	return exchangeCodeVia(ctx, code, verifier, manualRedirectURI)
 }
 
 // AnthropicLogin runs the full Claude OAuth login: PKCE, a local callback
@@ -93,12 +129,16 @@ func AnthropicLogin(ctx context.Context, store *Store, providerKey string, onURL
 }
 
 func exchangeCode(ctx context.Context, code, verifier string) (*Credentials, error) {
+	return exchangeCodeVia(ctx, code, verifier, redirectURI())
+}
+
+func exchangeCodeVia(ctx context.Context, code, verifier, redirect string) (*Credentials, error) {
 	body, _ := json.Marshal(map[string]string{
 		"grant_type":    "authorization_code",
 		"client_id":     anthropicClientID,
 		"code":          code,
 		"state":         verifier,
-		"redirect_uri":  redirectURI(),
+		"redirect_uri":  redirect,
 		"code_verifier": verifier,
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, anthropicTokenURL, bytes.NewReader(body))
