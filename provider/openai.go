@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 )
@@ -114,6 +115,14 @@ func (o *OpenAI) buildBody(req Request) map[string]any {
 			params := t.InputSchema
 			if params == nil {
 				params = map[string]any{"type": "object"}
+			}
+			if _, ok := params["properties"]; !ok {
+				// Strict validators (LM Studio) require properties on object
+				// schemas; copy so the tool's own spec map stays untouched.
+				norm := make(map[string]any, len(params)+1)
+				maps.Copy(norm, params)
+				norm["properties"] = map[string]any{}
+				params = norm
 			}
 			tools = append(tools, map[string]any{
 				"type": "function",
