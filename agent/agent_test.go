@@ -49,6 +49,60 @@ func (p *parallelProvider) Stream(_ context.Context, _ provider.Request, emit fu
 	return nil
 }
 
+// foreignIDProvider mimics an OpenAI-compatible vendor whose tool-call ids
+// carry characters Anthropic rejects on replay — plus one lost entirely.
+type foreignIDProvider struct{ turn int }
+
+func (f *foreignIDProvider) Name() string { return "foreign" }
+
+func (f *foreignIDProvider) Stream(_ context.Context, _ provider.Request, emit func(provider.Event)) error {
+	defer func() { f.turn++ }()
+	if f.turn == 0 {
+		emit(provider.Event{Type: provider.EventToolUseStart, Index: 0, ToolUseID: "functions.echo:0", ToolName: "echo"})
+		emit(provider.Event{Type: provider.EventToolUseDelta, Index: 0, InputDelta: `{"n":0}`})
+		emit(provider.Event{Type: provider.EventToolUseStart, Index: 1, ToolUseID: "", ToolName: "echo"})
+		emit(provider.Event{Type: provider.EventToolUseDelta, Index: 1, InputDelta: `{"n":1}`})
+		emit(provider.Event{Type: provider.EventStop, StopReason: provider.StopToolUse})
+		return nil
+	}
+	emit(provider.Event{Type: provider.EventTextDelta, TextDelta: "ok"})
+	emit(provider.Event{Type: provider.EventStop, StopReason: provider.StopEndTurn})
+	return nil
+}
+
+// The loop must never persist a vendor tool id that another provider would
+// reject on replay — histories are provider-neutral, ids included.
+func TestLoopPersistsOnlyPortableToolIDs(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&echoTool{})
+	ag := New(&foreignIDProvider{}, reg, Options{})
+
+	history, err := ag.Continue(context.Background(), nil, "go", &recHandler{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ids []string
+	for _, m := range history {
+		for _, b := range m.Content {
+			switch {
+			case b.Type == provider.BlockToolUse && b.ToolUse != nil:
+				if !portableToolIDRe.MatchString(b.ToolUse.ID) {
+					t.Errorf("persisted tool_use id %q not portable", b.ToolUse.ID)
+				}
+				ids = append(ids, b.ToolUse.ID)
+			case b.Type == provider.BlockToolResult && b.ToolResult != nil:
+				if !portableToolIDRe.MatchString(b.ToolResult.ToolUseID) {
+					t.Errorf("persisted tool_result id %q not portable", b.ToolResult.ToolUseID)
+				}
+			}
+		}
+	}
+	if len(ids) == 2 && ids[0] == ids[1] {
+		t.Error("two tool calls persisted with the same id")
+	}
+}
+
 type echoTool struct{ called int }
 
 func (e *echoTool) Spec() tool.Spec {

@@ -115,3 +115,47 @@ func TestRepairHistoryHealsPoisonedSessions(t *testing.T) {
 		t.Errorf("healthy history changed: %+v", out)
 	}
 }
+
+// A session run on one vendor then switched to Anthropic replays the stored
+// tool ids — Anthropic enforces ^[a-zA-Z0-9_-]+$ on them and 400s the whole
+// session otherwise (live failure: deepseek-minted ids wedged a claude switch).
+func TestRepairHistoryNormalizesForeignToolIDs(t *testing.T) {
+	h := []provider.Message{
+		{Role: "user", Content: []provider.Block{{Type: provider.BlockText, Text: "any email"}}},
+		{Role: "assistant", Content: []provider.Block{
+			{Type: provider.BlockToolUse, ToolUse: &provider.ToolUseBlock{ID: "functions.list_dir:0", Name: "list_dir", Input: map[string]any{}}},
+			{Type: provider.BlockToolUse, ToolUse: &provider.ToolUseBlock{ID: "", Name: "recall", Input: map[string]any{}}},
+			{Type: provider.BlockToolUse, ToolUse: &provider.ToolUseBlock{ID: "ok_1-a", Name: "schedule_list", Input: map[string]any{}}},
+		}},
+		{Role: "tool", Content: []provider.Block{
+			{Type: provider.BlockToolResult, ToolResult: &provider.ToolResultBlock{ToolUseID: "functions.list_dir:0", Content: "x"}},
+			{Type: provider.BlockToolResult, ToolResult: &provider.ToolResultBlock{ToolUseID: "", Content: "y"}},
+			{Type: provider.BlockToolResult, ToolResult: &provider.ToolResultBlock{ToolUseID: "ok_1-a", Content: "z"}},
+		}},
+	}
+	got := RepairHistory(h)
+
+	uses := got[1].Content
+	results := got[2].Content
+	for i, b := range uses {
+		id := b.ToolUse.ID
+		if !portableToolIDRe.MatchString(id) {
+			t.Errorf("tool_use %d id %q not portable", i, id)
+		}
+		if rid := results[i].ToolResult.ToolUseID; rid != id {
+			t.Errorf("pairing broken: tool_use %d id %q vs result id %q", i, id, rid)
+		}
+	}
+	if uses[2].ToolUse.ID != "ok_1-a" {
+		t.Errorf("already-portable id rewritten to %q", uses[2].ToolUse.ID)
+	}
+	if uses[0].ToolUse.ID == uses[1].ToolUse.ID {
+		t.Error("distinct foreign ids collapsed to the same portable id")
+	}
+	// Repair must be idempotent — persisting a repaired history and repairing
+	// again on next load must change nothing.
+	again := RepairHistory(got)
+	if again[1].Content[0].ToolUse.ID != got[1].Content[0].ToolUse.ID {
+		t.Error("repair is not idempotent on rewritten ids")
+	}
+}

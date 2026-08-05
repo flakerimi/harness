@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -438,9 +439,18 @@ func (a *Agent) stream(ctx context.Context, msgs []provider.Message, model strin
 		if s := strings.TrimSpace(ta.input.String()); s != "" {
 			_ = json.Unmarshal([]byte(s), &input)
 		}
+		// Histories are provider-neutral, ids included: a vendor id kept
+		// verbatim wedges the session the moment it replays on a stricter
+		// provider. A vendor that never sent one gets a minted local id.
+		id := ta.id
+		if id == "" {
+			id = fmt.Sprintf("call_%d", idx)
+		} else {
+			id = portableToolID(id)
+		}
 		blocks = append(blocks, provider.Block{
 			Type:    provider.BlockToolUse,
-			ToolUse: &provider.ToolUseBlock{ID: ta.id, Name: ta.name, Input: input},
+			ToolUse: &provider.ToolUseBlock{ID: id, Name: ta.name, Input: input},
 		})
 	}
 

@@ -3,6 +3,10 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"regexp"
+	"strings"
 
 	"github.com/flakerimi/harness/provider"
 )
@@ -48,11 +52,41 @@ func (w Window) Assemble(h []provider.Message) []provider.Message {
 	return out
 }
 
+// portableToolIDRe is the conservative tool-call id charset every provider
+// accepts on replay; Anthropic enforces exactly this pattern, so a history that
+// carries anything else 400s the moment the session switches to claude.
+var portableToolIDRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+// portableToolID rewrites a vendor-minted tool-call id onto the portable
+// charset. Deterministic, so a tool_use and its tool_result rewrite to the same
+// id and stay paired; portable ids (including its own output) pass through
+// untouched, keeping repair idempotent.
+func portableToolID(id string) string {
+	if portableToolIDRe.MatchString(id) {
+		return id
+	}
+	h := fnv.New64a()
+	h.Write([]byte(id))
+	clean := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			return r
+		}
+		return '_'
+	}, id)
+	if len(clean) > 40 {
+		clean = clean[:40]
+	}
+	return fmt.Sprintf("call_%s_%x", clean, h.Sum64())
+}
+
 // RepairHistory makes a persisted history safe to replay. Histories can carry
 // damage — a model emitting a malformed tool call (empty name), or a restart
 // clipping a turn so an assistant tool_use has no tool result — and providers
 // reject such requests outright, wedging the session forever. Repair drops
-// tool_use blocks with no name (and messages left empty by that), and closes
+// tool_use blocks with no name (and messages left empty by that), rewrites
+// tool ids minted by another vendor onto the portable charset (a mid-session
+// provider switch otherwise replays ids the new provider rejects), and closes
 // any dangling tool_use with a synthetic "interrupted" result so pairing holds.
 func RepairHistory(h []provider.Message) []provider.Message {
 	out := make([]provider.Message, 0, len(h))
@@ -60,13 +94,34 @@ func RepairHistory(h []provider.Message) []provider.Message {
 		if m.Role == "assistant" {
 			blocks := make([]provider.Block, 0, len(m.Content))
 			for _, b := range m.Content {
-				if b.Type == provider.BlockToolUse && (b.ToolUse == nil || b.ToolUse.Name == "") {
-					continue // malformed call — unreplayable
+				if b.Type == provider.BlockToolUse {
+					if b.ToolUse == nil || b.ToolUse.Name == "" {
+						continue // malformed call — unreplayable
+					}
+					if pid := portableToolID(b.ToolUse.ID); pid != b.ToolUse.ID {
+						tu := *b.ToolUse
+						tu.ID = pid
+						b.ToolUse = &tu
+					}
 				}
 				blocks = append(blocks, b)
 			}
 			if len(blocks) == 0 {
 				continue // nothing valid left in this message
+			}
+			m.Content = blocks
+		}
+		if m.Role == "tool" {
+			blocks := make([]provider.Block, len(m.Content))
+			for j, b := range m.Content {
+				if b.Type == provider.BlockToolResult && b.ToolResult != nil {
+					if pid := portableToolID(b.ToolResult.ToolUseID); pid != b.ToolResult.ToolUseID {
+						tr := *b.ToolResult
+						tr.ToolUseID = pid
+						b.ToolResult = &tr
+					}
+				}
+				blocks[j] = b
 			}
 			m.Content = blocks
 		}
