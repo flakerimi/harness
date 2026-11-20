@@ -104,3 +104,33 @@ func TestBuildClaudeFromProfileAuthFile(t *testing.T) {
 		t.Fatal("expected error with no credentials anywhere")
 	}
 }
+
+// LisaOS is the Lisa server an app is hosted on: its endpoint and the app's
+// own key come from the environment its Bridge sets, and tools are withheld
+// because the endpoint serves text only.
+func TestLisaOSProviderUsesTheHostsEndpointAndWithholdsTools(t *testing.T) {
+	t.Setenv("LISA_INFERENCE_URL", "")
+	t.Setenv("LISA_INFERENCE_KEY", "")
+	if _, err := BuildWith("lisaos", BuildOptions{}); err == nil {
+		t.Fatal("lisaos without its key should error")
+	}
+	t.Setenv("LISA_INFERENCE_KEY", "lisa-app-k")
+	if _, err := BuildWith("lisaos", BuildOptions{}); err == nil {
+		t.Fatal("lisaos without its endpoint should error")
+	}
+	t.Setenv("LISA_INFERENCE_URL", "http://lisa-inference:8080/v1")
+	for _, slug := range []string{"lisaos", "lisa", "LisaOS"} {
+		p, err := BuildWith(slug, BuildOptions{})
+		if err != nil {
+			t.Fatalf("BuildWith(%q): %v", slug, err)
+		}
+		o, ok := p.(*OpenAI)
+		if !ok || o.Name() != "lisaos" || o.BaseURL != "http://lisa-inference:8080/v1" || o.APIKey != "lisa-app-k" || !o.NoTools {
+			t.Fatalf("BuildWith(%q) = %+v", slug, p)
+		}
+		body := o.buildBody(Request{Model: "default", CapFlags: []string{CapTools}, Tools: []Tool{{Name: "bash"}}})
+		if _, sent := body["tools"]; sent {
+			t.Fatalf("tools were sent to LisaOS: %v", body)
+		}
+	}
+}

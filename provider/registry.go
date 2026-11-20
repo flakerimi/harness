@@ -150,6 +150,24 @@ func BuildWith(slug string, opts BuildOptions) (Provider, error) {
 			return nil, fmt.Errorf("provider %q: set its OpenAI-compatible endpoint (providers.qwen.base_url or $QWEN_BASE_URL — e.g. your DashScope compatible-mode URL)", slug)
 		}
 		return NewOpenAI("qwen", b, k), nil
+	case "lisaos", "lisa":
+		// LisaOS: the Lisa server this app is hosted on. Its Bridge gives every
+		// hosted app an OpenAI-compatible endpoint on the apps' own network and
+		// a key of its own (LISA_INFERENCE_URL, LISA_INFERENCE_KEY): the
+		// machine's local models and the providers connected there, no key of
+		// ours. Text only for now — a request that names tools is refused — so
+		// tools are withheld.
+		k := key("LISA_INFERENCE_KEY")
+		if k == "" {
+			return nil, errNoKey(slug, "LISA_INFERENCE_KEY")
+		}
+		b := base("LISA_INFERENCE_URL", "")
+		if b == "" {
+			return nil, fmt.Errorf("provider %q: no endpoint — LISA_INFERENCE_URL is set by a Lisa server's Bridge for the apps it hosts (restart the app there to receive it)", slug)
+		}
+		p := NewOpenAI("lisaos", b, k)
+		p.NoTools = true
+		return p, nil
 	case "openrouter":
 		k := key("OPENROUTER_API_KEY")
 		if k == "" {

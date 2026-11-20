@@ -17,6 +17,9 @@ import (
 // any OpenAI-compatible upstream (Ollama, LM Studio, Together, Fireworks, …)
 // by varying BaseURL.
 type OpenAI struct {
+	// NoTools withholds tool definitions from every request: for an endpoint
+	// that serves text only and refuses a request that names tools (LisaOS).
+	NoTools bool
 	slug    string
 	APIKey  string
 	BaseURL string // e.g. https://api.openai.com/v1
@@ -109,7 +112,7 @@ func (o *OpenAI) buildBody(req Request) map[string]any {
 	if req.MaxTokens > 0 {
 		body["max_tokens"] = req.MaxTokens
 	}
-	if len(req.Tools) > 0 && req.HasCap(CapTools) {
+	if len(req.Tools) > 0 && req.HasCap(CapTools) && !o.NoTools {
 		tools := make([]map[string]any, 0, len(req.Tools))
 		for _, t := range req.Tools {
 			params := t.InputSchema
