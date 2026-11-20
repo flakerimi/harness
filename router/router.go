@@ -105,6 +105,12 @@ func DefaultTable() *Table {
 	t.Set("openai", TierBalanced, "gpt-4o")
 	t.Set("openai", TierFast, "gpt-4o-mini")
 
+	// LisaOS — the hosting Lisa server's own choice: its default provider when
+	// one is connected there, else its default local model.
+	t.Set("lisaos", TierReasoning, "default")
+	t.Set("lisaos", TierBalanced, "default")
+	t.Set("lisaos", TierFast, "default")
+
 	// DeepSeek — v4 pro for the hard tiers, v4 flash for cheap/fast.
 	t.Set("deepseek", TierReasoning, "deepseek-v4-pro")
 	t.Set("deepseek", TierBalanced, "deepseek-v4-pro")
